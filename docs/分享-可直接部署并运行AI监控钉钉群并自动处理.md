@@ -358,11 +358,13 @@ C:\qa-agent\
   "secret": "",
   "window": ["09:00", "21:00"],
   "auto_reply_groups": [],
-  "emoji": false
+  "emoji": false,
+  "keep_days": 30,
+  "ai_fallback": true
 }
 ```
 
-`mode`：auto（默认）= 能回的直接回，拿不准的交给你；draft = 全部写草稿，你确认才发。第一次安装时问你选哪个，以后对 AI 助手说「切到草稿模式 / 自动模式」随时改。`workers` 是常驻几个处理通道；一次收到很多消息、待处理超过 `burst_threshold` 批时，会临时开子 Agent（多开 AI 处理通道，最多 `max_workers` 个，处理完自动退出）；`merge_seconds` 是同一会话多少秒内连发合并成一次判断，`ai`（v2.7）：判断用哪个 AI，`codex` / `claude` / `dsh` / `codebuddy`（WorkBuddy）/ `qoder`，不填就自动用本机装了的第一个；Trae 等其他工具填 `ai_cmd`（命令数组，用 `{prompt}` 占位或配 `"ai_prompt": "stdin"` 从标准输入传）。`ai_model` 可填一个更快的模型名（旧配置的 `codex_model` 仍然有效）。`webhook` / `secret` **必填**：本人专属提醒群里自定义机器人的地址和加签密钥（第 3.5 步建），所有提醒、草稿、每日汇报都由它发。`auto_reply_groups`（v2.6）：哪些群允许自动回复，**新部署一律留空 = 所有群只提醒不回复**；以后本人在提醒群发「群名 自动回复」+「确认开启 群名」二次确认才加进来。`emoji`（v2.6）：表情默认关，本人在提醒群发「表情 开」才开；部署最后跑一次 `python agent.py stickers` 下载内置表情包索引。
+`mode`：auto（默认）= 能回的直接回，拿不准的交给你；draft = 全部写草稿，你确认才发。第一次安装时问你选哪个，以后对 AI 助手说「切到草稿模式 / 自动模式」随时改。`workers` 是常驻几个处理通道；一次收到很多消息、待处理超过 `burst_threshold` 批时，会临时开子 Agent（多开 AI 处理通道，最多 `max_workers` 个，处理完自动退出）；`merge_seconds` 是同一会话多少秒内连发合并成一次判断，`ai`（v2.7）：判断用哪个 AI，`codex` / `claude` / `dsh` / `codebuddy`（WorkBuddy）/ `qoder`，不填就自动用本机装了的第一个；Trae 等其他工具填 `ai_cmd`（命令数组，用 `{prompt}` 占位或配 `"ai_prompt": "stdin"` 从标准输入传）。`ai_model` 可填一个更快的模型名（旧配置的 `codex_model` 仍然有效）。`webhook` / `secret` **必填**：本人专属提醒群里自定义机器人的地址和加签密钥（第 3.5 步建），所有提醒、草稿、每日汇报都由它发。`auto_reply_groups`（v2.6）：哪些群允许自动回复，**新部署一律留空 = 所有群只提醒不回复**；以后本人在提醒群发「群名 自动回复」+「确认开启 群名」二次确认才加进来。`emoji`（v2.6）：表情默认关，本人在提醒群发「表情 开」才开；部署最后跑一次 `python agent.py stickers` 下载内置表情包索引。`keep_days`（v2.7）：收到的消息原文、群历史导出、旧日志只保留最近 N 天（默认 30，0 = 不清）；提炼好的记忆和草稿不受影响。`ai_fallback`（v2.7）：判断用的 AI 没结果时，自动换本机装了的其他 AI 再试（默认开）。`update_url` / `update_page`：助手每天查一次有没有新版本、在哪下载，一般不用改。
 
 ### 3.2 agent.py（v2：后台静默、并行 + 子 Agent、合并、两种模式）
 
@@ -393,6 +395,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
       python agent.py status     今天处理了多少、还有几件没处理
       python agent.py clear      清空待回复（没处理完的事和草稿全部清掉，不发出）
       python agent.py stickers   下载 / 更新内置表情包索引（v2.6）
+      python agent.py purge      立刻清掉原始记录（消息原文、群历史导出、旧日志），记忆和草稿不动（v2.7）
 配置 ~/.qa-agent/config.json（Windows 是 %USERPROFILE%\\.qa-agent\\config.json）；记忆在安装目录的 memory/（Windows C:\\qa-agent\\memory\\，macOS / Linux ~/qa-agent/memory/）。"""
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 
@@ -403,7 +406,8 @@ DEFAULTS = {"my_name": "", "person_id": "", "roles": [], "project": "", "groups"
             "listen_dm": False, "mode": "auto", "max_auto_replies_per_10min": 3, "daily_codex_limit": 300, "workers": 2, "merge_seconds": 20,
             "burst_threshold": 3, "max_workers": 4, "ack_on_escalate": True, "notify_group": "", "scope_confirmed": False,
             "codex_model": "", "webhook": "", "secret": "", "window": ["09:00", "21:00"],
-            "emoji": False, "emoji_names": ["赞", "OK", "收到", "谢谢", "辛苦了", "加油", "鼓掌"]}
+            "emoji": False, "emoji_names": ["赞", "OK", "收到", "谢谢", "辛苦了", "加油", "鼓掌"],
+            "keep_days": 30, "update_url": "https://raw.githubusercontent.com/Lvan826199/dingtalk-group-assistant/main/agent.py", "update_page": "https://github.com/Lvan826199/dingtalk-group-assistant"}
 CFG = {**DEFAULTS, **json.load(open(CFG_PATH, encoding="utf-8"))}
 COORD = os.path.join(HOME, "project-coordination")
 MEMDIR = os.path.join(HOME, "memory")
@@ -435,11 +439,12 @@ AI_PRESETS = {
 }
 
 
-def ai_engine():
-    """返回 (显示名, 参数模板, prompt 传法)。ai_cmd 自定义优先（如 Trae：部署时按 traecli --help 填），其次 ai 指定的，最后自动找本机装了的。"""
-    if CFG.get("ai_cmd"):
+def ai_engine(only=None):
+    """返回 (显示名, 参数模板, prompt 传法)。ai_cmd 自定义优先（如 Trae：部署时按 traecli --help 填），其次 ai 指定的，最后自动找本机装了的。
+    only=预设名时只看这一个（备用 AI 用）。"""
+    if CFG.get("ai_cmd") and not only:
         return CFG.get("ai", "自定义"), list(CFG["ai_cmd"]), CFG.get("ai_prompt", "stdin")
-    names = [CFG["ai"]] if CFG.get("ai") in AI_PRESETS else list(AI_PRESETS)
+    names = [only] if only else ([CFG["ai"]] if CFG.get("ai") in AI_PRESETS else list(AI_PRESETS))
     for k in names:
         pr = AI_PRESETS[k]
         exe = which(pr["bin"])
@@ -450,8 +455,26 @@ def ai_engine():
 
 
 def ai_exec(prompt, timeout=300):
-    """跑一次 AI，返回它的最后输出文本；找不到 / 失败返回空串。"""
+    """跑一次 AI，返回它的最后输出文本。主 AI 没结果（没装、报错、卡住）时，按顺序试本机装了的其他 AI（v2.7；config "ai_fallback": false 关掉）。都不行返回空串。"""
     name, args, how = ai_engine()
+    text = _ai_once(name, args, how, prompt, timeout)
+    if text.strip() or CFG.get("ai_fallback") is False:
+        return text
+    for k in AI_PRESETS:
+        n2, a2, h2 = ai_engine(only=k)
+        if not a2 or n2 == name:
+            continue
+        log(name, "没结果，改用备用", n2)
+        text = _ai_once(n2, a2, h2, prompt, timeout)
+        if text.strip():
+            if not STATE.get("fallback_told"):
+                STATE["fallback_told"] = True
+                notify("🔁 判断用的 AI 换成了备用", f"{name} 没给出结果（没装好、报错或卡住），这次改用 {n2}。经常这样的话，检查一下 {name} 在终端里能不能用。今天不再重复提醒。")
+            return text
+    return text
+
+
+def _ai_once(name, args, how, prompt, timeout):
     if not args:
         log("没找到可用的 AI 命令行（codex / claude / codebuddy / qodercli / dsh）"); return ""
     out = os.path.join(HOME, "logs", f"ai-{threading.get_ident()}-{time.time_ns()}.txt")
@@ -664,6 +687,9 @@ def upgrade_ask():
 def group_command(text):
     """按群开关自动回复：「群列表」看状态；「<群名> 只提醒」立即关；「<群名> 自动回复」要再回「确认开启 <群名>」（10 分钟内）才开。写回 config.json。"""
     allg = {**CFG["groups"], **CFG["readonly_groups"]}
+    if text in ("清理记录", "清理原始记录"):
+        n = purge_now()
+        notify("🧹 原始记录已清理", f"清掉 {n} 条 / 个（收到的消息原文、群历史导出、旧日志）。提炼好的记忆和草稿没动。平时会自动只保留最近 {CFG.get('keep_days') or '不限'} 天。"); return True
     if text in ("保持现状", "全部只提醒") and "auto_reply_groups" not in CFG:
         save_cfg("auto_reply_groups", list(CFG["groups"]) if text == "保持现状" else [])
         notify("👥 已按你说的设置", "保持原来的自动回复群" if text == "保持现状" else "所有群改成只提醒；要开哪个群发「群名 自动回复」"); return True
@@ -996,7 +1022,7 @@ class SendFailed(RuntimeError):
 SEND_FAIL = {"t": 0, "n": 0}
 
 
-def send_failed(e, text, err):
+def send_failed(e, text, err, no=""):
     """dws 出故障 / 版本不兼容 / 服务端报错时消息发不出去：用提醒群机器人同步通知本人，30 分钟内只提醒一次（v2.7，11-18 全公司 dws 发消息报「请求参数不能为空」）。"""
     SEND_FAIL["n"] += 1
     log("钉钉消息没发出去", e.get("conversation_id"), err[:200])
@@ -1004,9 +1030,9 @@ def send_failed(e, text, err):
         return
     SEND_FAIL["t"] = time.time()
     group = {**CFG["groups"], **CFG["readonly_groups"]}.get(e.get("conversation_id"), e.get("conversation_id"))
-    notify("⚠️ 钉钉消息没发出去", f"群：{group}\n原消息：{e.get('sender')}：{str(e.get('content'))[:100]}\n要发的内容：{text[:500]}\n错误：{err[:200]}\n"
+    notify("⚠️ 钉钉消息没发出去" + (f"（{no}）" if no else ""), f"群：{group}\n原消息：{e.get('sender')}：{str(e.get('content'))[:100]}\n要发的内容：{text[:500]}\n错误：{err[:200]}\n"
            "可能是钉钉 CLI（dws）故障或版本太旧：在电脑上运行 dws doctor 检查，dws upgrade -y 升级；如果同事也都发不出去，就是钉钉那边的问题，等恢复。"
-           "要紧的先手动发；内容已存成草稿，恢复后在这里回「#编号 可以发送」重发。30 分钟内再失败不重复提醒。")
+           + (f"要紧的先手动发；内容已存成草稿，恢复后在这里回「{no} 可以发送」重发。" if no else "要紧的先手动发。") + "30 分钟内再失败不重复提醒（发「待回复」能看到全部没发出去的）。")
 
 
 def reply(e, text, keep_draft=True):
@@ -1018,11 +1044,12 @@ def reply(e, text, keep_draft=True):
     if r.returncode != 0 or not re.search(r'"(success|ok)":\s*true', out):
         err = re.search(r'"message":\s*"([^"]*)', out + (r.stderr or ""))
         err = err.group(1) if err else (out or r.stderr or "")[:200]
+        no = ""
         if keep_draft:                                                   # 发不出去的回复存成草稿，恢复后一句话重发
             name = save_draft(e, text); no = open_add(e, "draft", "发送失败待重发：" + text[:20])
             dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
             json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-        send_failed(e, text, err)
+        send_failed(e, text, err, no)
         raise SendFailed("回复失败：" + err)
 
 
@@ -1111,7 +1138,7 @@ def worker(temp=False):
                 continue
             with LOCK, open(os.path.join(HOME, "inbox.jsonl"), "a", encoding="utf-8") as f:
                 for x in batch:
-                    f.write(json.dumps(x, ensure_ascii=False) + "\n")
+                    f.write(json.dumps({**x, "_t": int(time.time())}, ensure_ascii=False) + "\n")   # _t：保留期清理用
             try:
                 handle(batch)
             except SendFailed:
@@ -1217,6 +1244,68 @@ def status():
         print(" ", l[:150])
 
 
+def _ver(v):
+    m = re.search(r"v?(\d+(?:\.\d+)*)", str(v or ""))
+    return tuple(int(x) for x in m.group(1).split(".")) if m else ()
+
+
+def self_update_check():
+    """每天第一次启动时查一次助手有没有新版本（v2.7）：读 update_url（内网网页的 version.json，或开源仓库的 agent.py），比本机 VERSION 新就在提醒群说一声；同一个新版本只提醒一次。"""
+    url = CFG.get("update_url")
+    if not url:
+        return
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "group-assistant"}), timeout=20, context=SSLCTX) as r:
+            text = r.read(200000).decode("utf-8", "replace")
+    except Exception as ex:
+        log("新版本检查失败", repr(ex)[:120]); return
+    m = re.search(r'(?i)"?version"?\s*[:=]\s*"(v[\d.]+)', text)
+    if not m or _ver(m.group(1)) <= _ver(VERSION):
+        log("新版本检查", "已是最新" if m else "没读到版本号"); return
+    mark = os.path.join(HOME, "logs", f"update-told-{m.group(1)}")
+    if os.path.exists(mark):
+        return
+    open(mark, "w").close()
+    notify(f"⬆️ 群消息助手有新版本 {m.group(1)}", f"你现在是 {VERSION.split()[0]}。升级：下载最新部署文档（{CFG.get('update_page') or url}），拖进你的 AI 助手，发「升级到 {m.group(1)}」。升级不会覆盖你已有的规则。")
+
+
+def cleanup_old():
+    """保留期（v2.7，config keep_days，默认 30 天，0 = 不清）：只清原始记录——收到的消息原文 inbox.jsonl、建记忆导出的群历史 history/、旧日志；
+    提炼好的记忆（memory/）和没处理完的草稿不动。"""
+    days = int(CFG.get("keep_days") or 0)
+    if days <= 0:
+        return 0
+    cut = time.time() - days * 86400; n = 0
+    inbox = os.path.join(HOME, "inbox.jsonl")
+    if os.path.exists(inbox):
+        with LOCK:
+            def _t(line):
+                try:
+                    return json.loads(line).get("_t") or 0
+                except ValueError:
+                    return 0
+            keep = [l for l in open(inbox, encoding="utf-8") if _t(l) >= cut]
+            n += sum(1 for _ in open(inbox, encoding="utf-8")) - len(keep)
+            open(inbox, "w", encoding="utf-8").writelines(keep)
+    for f in glob.glob(os.path.join(HOME, "history", "*")) + glob.glob(os.path.join(HOME, "logs", "*")):
+        if os.path.isfile(f) and os.path.getmtime(f) < cut and not f.endswith(dt.date.today().isoformat() + ".log"):
+            os.remove(f); n += 1
+    log("保留期清理", days, "天，清掉", n, "条 / 个")
+    return n
+
+
+def purge_now():
+    """「清理记录」：立刻清掉全部原始记录（消息原文、群历史导出、今天以前的日志）；提炼好的记忆和草稿不动。"""
+    n = 0
+    inbox = os.path.join(HOME, "inbox.jsonl")
+    if os.path.exists(inbox):
+        n += sum(1 for _ in open(inbox, encoding="utf-8")); open(inbox, "w").close()
+    for f in glob.glob(os.path.join(HOME, "history", "*")) + [x for x in glob.glob(os.path.join(HOME, "logs", "*.log")) if not x.endswith(dt.date.today().isoformat() + ".log")]:
+        if os.path.isfile(f):
+            os.remove(f); n += 1
+    return n
+
+
 def dws_version_check():
     """每天第一次启动时查一次钉钉 CLI 有没有新版本，有就在提醒群说一声（v2.7：11-18 钉钉发消息故障，旧版 CLI 和服务端对不上时症状一样，早知道早升级）。"""
     mark = os.path.join(HOME, "logs", f"dws-version-{dt.date.today()}.checked")
@@ -1234,7 +1323,7 @@ def dws_version_check():
 def check():
     print("版本", VERSION)
     ai_name, ai_args, _ = ai_engine()
-    pong = ai_exec("只回复两个字：正常", timeout=120) if ai_args else ""
+    pong = _ai_once(ai_name, ai_args, _, "只回复两个字：正常", 120) if ai_args else ""   # 只测主 AI，不走备用
     print(("✅ " if pong.strip() else "❌ ") + f"判断用的 AI：{ai_name}" + ("" if pong.strip() else "（命令行调用失败：确认你平时用的这个 AI 工具在终端里能用；用的是别的工具就在 config.json 改 ai）"))
     for name, args in (("dws 登录", [DWS, "auth", "status"]), ("git", [GIT, "--version"]), ("node", [NODE, "--version"])):
         r = run(args, timeout=60)
@@ -1253,6 +1342,8 @@ def check():
 def main():
     if len(sys.argv) >= 2 and sys.argv[1] == "clear":
         n, k = clear_all(); print(f"已清空：{n} 件没处理完的事、{k} 份草稿，都没有发出"); return
+    if len(sys.argv) >= 2 and sys.argv[1] == "purge":
+        print("已清理原始记录", purge_now(), "条 / 个（记忆和草稿没动）"); return
     if len(sys.argv) >= 2 and sys.argv[1] == "stickers":
         print("表情包已下载", build_stickers(), "张 →", STICKERS); return
     if len(sys.argv) >= 2 and sys.argv[1] in ("review", "check", "status"):
@@ -1276,6 +1367,8 @@ def main():
     log("启动", VERSION, "模式", CFG["mode"])
     threading.Thread(target=morning_report, daemon=True).start()
     threading.Thread(target=dws_version_check, daemon=True).start()
+    threading.Thread(target=self_update_check, daemon=True).start()
+    threading.Thread(target=cleanup_old, daemon=True).start()
     upgrade_ask()
     while in_window():
         time.sleep(30)
@@ -1903,6 +1996,9 @@ loginctl enable-linger $USER    # 可选：不登录桌面也运行（需要管�
 | 昨天干了什么 | 每天上班自动发到你和自己的钉钉私聊；也可以直接看 `memory\每日总结.md` |
 | 提醒群收到「⚠️ 钉钉消息没发出去」 | 先在电脑上运行 `dws doctor`；提示有新版本就 `dws upgrade -y`；同事也都发不出去就是钉钉那边的问题，等恢复。没发出去的回复已存成草稿，恢复后在提醒群回「#编号 可以发送」重发；要紧的先手动发 |
 | 角色职责库加一个角色 / 删掉某个角色 / 改某条 | AI 助手改 `C:\qa-agent\角色职责库.json`；改的是你在用的角色时先念给你二次确认，再同步进工作手册 |
+| 提醒群收到「⬆️ 群消息助手有新版本」 | 按提示下载最新部署文档，拖进 AI 助手发「升级到 新版本号」；升级不会覆盖你已有的规则 |
+| 提醒群收到「🔁 判断用的 AI 换成了备用」 | 你设的 AI 这次没给结果，已自动换本机另一个 AI；经常出现就检查一下原来那个 AI 在终端里能不能用 |
+| 不想留聊天原文 / 清理一下 | 提醒群发「清理记录」，或运行 `python agent.py purge`：立刻清掉消息原文、群历史导出、旧日志；记忆和草稿不动。平时自动只留最近 30 天 |
 | 角色职责库里缺了某个角色 | 不用管，AI 助手发现了会自行补充（标「AI 补充」），补完告诉你；补的是你在用的角色时先念给你确认 |
 | 我换角色了 / 多负责一个角色 | AI 助手按第 2 步重走一遍角色职责（展示 → 你修改补充 → 二次确认） |
 | 「XX 这事以后归 YY 管」，记一下 | 追加进 `memory\负责人.md` |
