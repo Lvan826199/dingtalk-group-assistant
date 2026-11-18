@@ -38,12 +38,18 @@ open(os.path.join(OUT, "view.html"), "w", encoding="utf-8").write(f"""<!doctype 
 <title>群消息助手 · 文档</title><script>try{{var t=localStorage.getItem('qa-theme');if(t&&t!=='auto')document.documentElement.dataset.theme=t}}catch(e){{}}</script>
 <link rel="stylesheet" href="assets/guide.css"><style>#c{{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px 32px;margin-top:20px;overflow-x:auto}}#c pre{{background:var(--surface-soft);padding:14px;border-radius:8px;overflow-x:auto;font-size:13px}}#c table{{border-collapse:collapse;display:block;overflow-x:auto}}#c td,#c th{{border:1px solid var(--border);padding:6px 10px}}#c h1,#c h2,#c h3{{margin:1.2em 0 .5em}}#c p{{margin:.6em 0}}</style>
 <script src="assets/marked.min.js"></script></head><body>
-<header class="site-header"><div class="header-inner"><a class="brand" href="./"><span class="logo">群</span>群消息助手</a><nav class="header-nav"><a href="./">← 返回指南</a></nav><a class="button ghost" id="dl" download>下载原文件</a></div></header>
+<header class="site-header"><div class="header-inner"><a class="brand" href="./"><span class="logo">群</span>群消息助手</a><nav class="header-nav"><a href="./">← 返回指南</a></nav><span id="mdtools" style="display:none;gap:10px;align-items:center;font-size:13.5px"><button class="link-button" id="cp">⧉ 复制页面</button><a id="raw"></a></span><a class="button ghost" id="dl" download>下载原文件</a></div></header>
+<div class="toast" id="toast">已复制</div>
 <main class="page"><div id="c">加载中…</div></main>
 <script>const q=new URLSearchParams(location.search),f=q.get('f')||'',n=q.get('n')||f;
 if(!/^doc\\d+\\.(md|py|json)$/.test(f)){{document.getElementById('c').textContent='文件不存在';}}else{{
 document.getElementById('dl').href='files/'+f;document.getElementById('dl').download=n;document.title=n;
 fetch('files/'+f).then(r=>r.text()).then(t=>{{const c=document.getElementById('c');
+if(f.endsWith('.md')){{const raw=q.get('raw')==='1',tl=document.getElementById('mdtools'),ra=document.getElementById('raw');tl.style.display='inline-flex';
+ra.textContent=raw?'以网页格式查看':'以 Markdown 格式查看';const u=new URLSearchParams(location.search);raw?u.delete('raw'):u.set('raw','1');ra.href='view.html?'+u.toString();
+document.getElementById('cp').onclick=()=>{{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();let ok=false;try{{ok=document.execCommand('copy')}}catch(e){{}}a.remove();
+if(!ok&&navigator.clipboard){{navigator.clipboard.writeText(t)}}const to=document.getElementById('toast');to.textContent='已复制全文（'+Math.round(t.length/1024)+' KB），粘贴给你的 AI 助手就行';to.classList.add('on');setTimeout(()=>to.classList.remove('on'),1800)}};
+if(raw){{const p=document.createElement('pre');p.style.whiteSpace='pre-wrap';p.textContent=t;c.replaceChildren(p);return}}}}
 if(f.endsWith('.json')){{let d;try{{d=JSON.parse(t)}}catch(e){{}}if(d&&d['角色']){{const esc=x=>String(x).replace(/[&<>]/g,m=>({{'&':'&amp;','<':'&lt;','>':'&gt;'}})[m]);const li=a=>'<ul>'+(a||[]).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>';c.innerHTML='<h1>角色职责库</h1><p>'+esc(d['说明']||'')+'</p><h2>通用规则</h2>'+li(d['通用规则'])+d['角色'].map(r=>'<h2>'+esc(r['名称'])+'</h2><p><b>关注</b></p>'+li(r['关注'])+'<p><b>有依据时可以直接回答</b></p>'+li(r['可以直接回答（有依据时）'])+'<p><b>一律交给本人</b></p>'+li(r['一律交给本人'])+'<p><b>推荐监控的群</b>：'+esc((r['推荐监控的群']||[]).join('、'))+'</p>').join('');}}else{{const p=document.createElement('pre');p.textContent=t;c.replaceChildren(p);}}}}else if(!f.endsWith('.md')){{const p=document.createElement('pre');p.textContent=t;c.replaceChildren(p);}}
 else{{c.innerHTML=marked.parse(t.replace(/</g,'&lt;'));}}}});}}</script></body></html>""")
 json.dump({"version": ver}, open(os.path.join(OUT, "version.json"), "w"))
