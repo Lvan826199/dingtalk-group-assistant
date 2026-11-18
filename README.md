@@ -1,5 +1,7 @@
 # 群消息助手（钉钉）
 
+[![test](https://github.com/Lvan826199/dingtalk-group-assistant/actions/workflows/test.yml/badge.svg)](https://github.com/Lvan826199/dingtalk-group-assistant/actions/workflows/test.yml) ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
+
 监听钉钉群消息，按你的角色和职责范围判断每一条：能答的写好回复，拿不准的交给你，不归你的不插话。全程后台静默，提醒只走你自己的提醒群机器人。
 
 ![新手指南网页](docs/images/hero.jpg)
@@ -39,6 +41,8 @@
 | `roles/角色职责库.json` | 角色职责库，可以自己增删改 |
 | `site/` | 可选：把文档做成内网网页（`python3 site/build_site.py`） |
 | `CHANGELOG.md` | 更新记录 |
+| `ROADMAP.md` | 路线图（待验证、计划中） |
+| `tests/` | 自动化测试，CI 在 Windows / macOS / Linux 上跑 |
 
 改了 `agent.py` / `bootstrap_memory.py` 后运行 `python3 build_docs.py`，把代码同步进部署文档。
 
