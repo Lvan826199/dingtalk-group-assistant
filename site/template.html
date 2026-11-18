@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>群消息助手 · 新手指南</title>
+<script>try{var t=localStorage.getItem('qa-theme');if(t&&t!=='auto')document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="assets/guide.css"><script src="assets/marked.min.js"></script></head>
+<body>
+<header class="site-header"><div class="header-inner">
+  <a class="brand" href="#top"><span class="logo">群</span>群消息助手</a>
+  <nav class="header-nav"><a href="#start">快速上手</a><a href="#usage">日常用法</a><a href="#upgrade">升级</a><a href="#changelog">更新记录</a><a href="#faq">常见问题</a></nav>
+  <div class="theme-picker" role="group" aria-label="页面主题"><button data-t="auto">跟随系统</button><button data-t="light">浅色</button><button data-t="dark">深色</button></div>
+</div></header>
+<main class="page" id="top">
+<section class="hero">
+  <div>
+    <div class="kicker">从这里，开始第一次部署 <span class="badge">{{VER}}</span></div>
+    <h1>群里的消息，<br><em>只把该你处理的</em>交给你。</h1>
+    <p class="lead">监听钉钉工作群，按你的职责范围判断每条消息：能答的写好回复，拿不准的交给你，不归你的不插话。全程后台静默，提醒只走你自己的提醒群。</p>
+    <div class="hero-actions"><a class="button primary" href="#start">开始上手</a><a class="button ghost" href="files/doc0.md" download="{{DOC0}}">下载部署文档 {{VER_SHORT}}</a></div>
+    <p class="hero-note">产品 / 研发 / 测试 / 运营 / 项目负责人都能用 · Windows / macOS / Linux + 任一 AI 编程助手 + 钉钉 CLI · 部署约 15 分钟 · 群聊默认只提醒，开自动回复要你二次确认</p>
+  </div>
+  <div class="hero-card"><div class="chat">
+    <div class="msg"><span class="who">同事 · 测试群</span>@你 最新包里 special 改名改完了吗？</div>
+    <div class="msg bot"><span class="who">助手 → 你的提醒群</span>🔔 #A3F 需要你处理：问改名进度，记忆里没有明确依据，交给你。</div>
+    <div class="msg"><span class="who">项目助手 · 测试群</span>@另一位同事 第 3 行更正一下…</div>
+    <div class="msg bot"><span class="who">助手</span>别人之间的对话，不回、不打扰你。</div>
+    <div class="msg me"><span class="who">你 · 提醒群</span>#A3F 改成：改完了，#231 包起都带</div>
+  </div></div>
+</section>
+
+<section class="block">
+  <div class="section-heading"><div class="section-kicker">先认识它</div><h2>一条消息进来，会经过这四步</h2><p>只看和你有关的消息；判断交给你自己的 AI（只读模式），执行由脚本完成，每一步都有记录。</p></div>
+  <div class="workflow">
+    <div class="wf"><span class="n">1</span><b>监听</b><span>钉钉长连接收消息，只在上班时段（默认 09:00–21:00）。</span></div>
+    <div class="wf"><span class="n">2</span><b>过滤</b><span>@ 你、提到关键词或关注的同事才处理；@ 别人的直接跳过。</span></div>
+    <div class="wf"><span class="n">3</span><b>判断</b><span>按职责范围、工作手册和硬规则：是不是归你、能不能答、有没有依据。</span></div>
+    <div class="wf"><span class="n">4</span><b>执行</b><span>回复、写草稿或提醒你；新学到的「谁负责什么」记进记忆。</span></div>
+  </div>
+  <div class="outcomes">
+    <div class="oc g"><b>💬 自动回复</b><span>确定归你、有明确依据、该群已二次确认开启自动回复。</span></div>
+    <div class="oc b"><b>📝 草稿等你确认</b><span>草稿模式，或 10 分钟内自动回复太多时，发到提醒群等你一句「可以发送」。</span></div>
+    <div class="oc a"><b>🔔 交给你</b><span>派活、排期、承诺、拿不准的一律交给你，绝不替你答应。</span></div>
+  </div>
+</section>
+
+<section class="block" id="start">
+  <div class="section-heading"><div class="section-kicker">Before you start</div><h2>开始前，准备这几样</h2><p>缺了也没关系，部署时 AI 助手会先检查，缺什么问你要不要帮你装。下面的命令按你的系统显示：</p></div>
+  <div class="theme-picker os-picker" role="group" aria-label="你的系统" style="display:inline-flex;margin-top:16px"><button data-os="win">Windows</button><button data-os="mac">macOS</button><button data-os="linux">Linux</button></div>
+  <div class="req">
+    <div><b>Windows / macOS / Linux</b><span>助手跑在你自己的电脑上，记忆和配置都在本机。</span></div>
+    <div><b>AI 编程助手</b><span>你平时用哪个就用哪个（Codex、Claude Code、DSH、WorkBuddy、Trae、Qoder 等）；部署和每条消息的判断都用它。</span></div>
+    <div><b>钉钉 CLI（dws）</b><span>你自己扫码登录 <code>dws auth login</code>，不代填任何凭据。</span></div>
+    <div><b>Python 3.10+ / Git / Node</b><span>AI 助手第 0 步先认出你的系统，用什么命令它自己定，再逐个检查。</span></div>
+  </div>
+  <div class="guide-layout">
+    <div>
+      <div class="step-card" id="s1"><div class="step-heading"><span class="no">01</span><h3>下载部署文档</h3></div>
+        <p>一份 Markdown 文件，里面有给 AI 助手的完整指令、代码和工作手册，不用另外下载程序。</p>
+        <div class="hero-actions" style="margin-top:14px"><a class="button primary" href="files/doc0.md" download="{{DOC0}}">下载部署文档</a><a class="button ghost" href="view.html?f=doc0.md&n={{DOC0}}">在线看全文</a></div></div>
+      <div class="step-card" id="s2"><div class="step-heading"><span class="no">02</span><h3>拖进你的 AI 助手，发「部署」</h3></div>
+        <p>AI 助手按文档从第 0 步开始：查环境 → 给你看风险 → 认出你是谁 → 一步一步问你选项（回数字就行）。</p>
+        <div class="cmd"><code>部署</code><button class="copy-button" data-copy="部署">复制</button></div></div>
+      <div class="step-card" id="s3"><div class="step-heading"><span class="no">03</span><h3>确认角色、职责范围和回复规则</h3></div>
+        <p>有协作库就按协作库认出你的角色和职责；没有就从<b>角色职责库</b>选（产品、Android、iOS、H5、网页版、服务端、剧中台、推荐、测试、运营、后台 UI、项目负责人，可多选）。每个角色的职责会念给你，你修改、补充，最后二次确认才生效。</p>
+        <div class="callout">群聊默认只提醒、不回复。哪个群要自动回复，以后在提醒群里二次确认再开。</div></div>
+      <div class="step-card" id="s4"><div class="step-heading"><span class="no">04</span><h3>建你自己的提醒群机器人</h3></div>
+        <p>建一个只有你自己的钉钉群，加自定义机器人（加签）。所有提醒、草稿、每日汇报都发到这里，有推送、有历史。</p></div>
+      <div class="step-card" id="s5"><div class="step-heading"><span class="no">05</span><h3>自检，看到版本号就好了</h3></div>
+        <p>最后 AI 助手会跑一次自检，并下载内置表情包索引，再按你的系统设好每天 09:00 和登录时自动启动（Windows 计划任务 / macOS LaunchAgent / Linux systemd）。提醒群收到一条「助手自检」就说明机器人通了。</p>
+        <div class="cmd"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py check">复制</button></div></div>
+    </div>
+    <aside class="progress-card" aria-label="上手进度"><h3>上手进度 <span id="pc">0 / 5</span></h3><div class="bar"><i id="pb"></i></div>
+      <label><input type="checkbox" data-s="1">下载部署文档</label><label><input type="checkbox" data-s="2">拖进 AI 助手发「部署」</label>
+      <label><input type="checkbox" data-s="3">确认职责范围</label><label><input type="checkbox" data-s="4">建提醒群机器人</label><label><input type="checkbox" data-s="5">自检通过</label>
+      <button class="reset" id="reset">重置进度</button></aside>
+  </div>
+</section>
+
+<section class="block" id="usage">
+  <div class="section-heading"><div class="section-kicker">日常用法</div><h2>在提醒群里说一句就行</h2><p>点下面的指令可以复制。<code>#编号</code> 换成提醒里的编号，<code>群名</code> 换成实际群名。</p></div>
+  <div class="usage">
+    <div class="use"><h3>草稿要不要发</h3><p>草稿发到提醒群，你一句话决定。</p><div class="tags"><code>#编号 可以发送</code><code>#编号 不发</code><code>#编号 改成：新内容</code><code>全部发送</code></div></div>
+    <div class="use"><h3>看还有哪些没回</h3><p>列出全部没处理完的事，有草稿的带上草稿。</p><div class="tags"><code>待回复</code><code>#编号 暂存：内容</code><code>清空</code></div></div>
+    <div class="use"><h3>「是不是归你？」</h3><p>拿不准归谁时群里一个字都不回，只问你。</p><div class="tags"><code>#编号 不归我</code></div></div>
+    <div class="use"><h3>哪些群能自动回复</h3><p>默认都只提醒；开启要二次确认，关掉立即生效。</p><div class="tags"><code>群列表</code><code>群名 自动回复</code><code>确认开启 群名</code><code>群名 只提醒</code></div></div>
+    <div class="use"><h3>表情和表情包</h3><p>默认关。开了以后只在轻松场合、确定找你时用；内置约 840 张，不用自己配。</p><div class="tags"><code>表情 开</code><code>表情 关</code><code>表情包</code><code>删表情包 名字</code></div></div>
+    <div class="use"><h3>角色职责库</h3><p>对你的 AI 助手说就行；改到你在用的角色，会先念给你二次确认。</p><div class="tags"><code>角色职责库加一个角色</code><code>删掉某个角色</code><code>我换角色了</code></div></div>
+    <div class="use"><h3>助手状态</h3><p>在电脑上运行，看环境、今天处理了多少。</p><div class="tags"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><code data-win="python C:\qa-agent\agent.py status" data-unix="python3 ~/qa-agent/agent.py status">python C:\qa-agent\agent.py status</code></div></div>
+  </div>
+</section>
+
+<section class="block" id="upgrade">
+  <div class="section-heading"><div class="section-kicker">已经装过</div><h2>升级到 {{VER_SHORT}}</h2><p>升级不会覆盖你已有的规则：新规则和你的设置有冲突时，AI 助手会一条条问你。</p></div>
+  <div class="step-card" style="margin-top:24px">
+    <div class="step-heading"><span class="no">①</span><h3>下载最新部署文档，拖进你的 AI 助手，发</h3></div>
+    <div class="cmd"><code>升级到 {{VER_SHORT}}</code><button class="copy-button" data-copy="升级到 {{VER_SHORT}}">复制</button></div>
+    <div class="step-heading" style="margin-top:22px"><span class="no">②</span><h3>按提示重建一次记忆（修了把人认错的问题）</h3></div>
+    <div class="cmd"><code data-win="python C:\qa-agent\bootstrap_memory.py" data-unix="python3 ~/qa-agent/bootstrap_memory.py">python C:\qa-agent\bootstrap_memory.py</code><button class="copy-button" data-copy="python C:\qa-agent\bootstrap_memory.py">复制</button></div>
+    <div class="step-heading" style="margin-top:22px"><span class="no">③</span><h3>自检，看到「版本 {{VER_SHORT}}」</h3></div>
+    <div class="cmd"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py check">复制</button></div>
+    <div class="callout">原来开着自动回复的群照旧。助手启动后会在提醒群问你「保持现状 / 全部只提醒」，没回之前不改。</div>
+  </div>
+</section>
+
+<section class="block" id="changelog">
+  <div class="section-heading"><div class="section-kicker">更新记录</div><h2>每个版本改了什么</h2></div>
+  <div class="changelog" id="cl"></div>
+  <script type="text/markdown" id="cl-src">{{CHANGELOG}}</script>
+</section>
+
+<section class="block" id="files">
+  <div class="section-heading"><div class="section-kicker">下载</div><h2>文档和源码</h2></div>
+  <div class="downloads">{{DOWNLOADS}}</div>
+</section>
+
+<section class="block faq" id="faq">
+  <div class="section-heading"><div class="section-kicker">常见问题</div><h2>常见问题</h2></div>
+  <div style="margin-top:16px">
+    <details><summary>它会不会替我答应别人的需求？</summary><p>不会。派活、排期、要你负责、问能不能做 / 什么时候完成，一律交给你；这是代码和提示词里的硬规则。</p></details>
+    <details><summary>群里会不会突然冒出它的回复？</summary><p>群聊默认只提醒。只有你在提醒群发「群名 自动回复」并「确认开启 群名」之后，那个群才会自动回复，而且只回确定归你、有明确依据的事。</p></details>
+    <details><summary>会读我的私聊吗？</summary><p>默认不读私聊，只监听部署时你选的群。</p></details>
+    <details><summary>凭据存在哪？</summary><p>都在你自己的电脑上（Windows <code>%USERPROFILE%\.qa-agent\config.json</code>，macOS / Linux <code>~/.qa-agent/config.json</code>），不上传、不进仓库；钉钉登录由你自己扫码。</p></details>
+    <details><summary>用哪个 AI？</summary><p>你平时用哪个就用哪个，账号、API Key 你自己配，我们不管。部署时 AI 助手会把自己记成「判断用的 AI」；想换就对 AI 助手说「判断改用 Claude Code」。</p></details>
+    <details><summary>Mac 上装在哪？</summary><p>装在 <code>~/qa-agent</code>，不要放桌面、文稿或下载：系统隐私保护会让后台任务读不到这些目录。</p></details>
+    <details><summary>表情包为什么不会动？</summary><p>钉钉用 Markdown 图片发出时只显示第一帧，这是钉钉的限制。</p></details>
+    <details><summary>遇到问题找谁？</summary><p>把 AI 助手的报错截图发给梦无矶。</p></details>
+  </div>
+</section>
+</main>
+<footer class="site-footer">群消息助手 {{VER}} · 维护：梦无矶· 内网页面，文档以本页下载的最新版为准</footer>
+<div class="toast" id="toast">已复制</div>
+<script>
+(function(){
+  var root=document.documentElement,btns=document.querySelectorAll('.theme-picker button');
+  function cur(){try{return localStorage.getItem('qa-theme')||'auto'}catch(e){return 'auto'}}
+  function apply(t){if(t==='auto')delete root.dataset.theme;else root.dataset.theme=t;btns.forEach(function(b){b.setAttribute('aria-pressed',b.dataset.t===t)});try{localStorage.setItem('qa-theme',t)}catch(e){}}
+  btns.forEach(function(b){b.onclick=function(){apply(b.dataset.t)}});apply(cur());
+  var osb=document.querySelectorAll('.os-picker button');
+  function curOs(){try{var v=localStorage.getItem('qa-os');if(v)return v}catch(e){}var u=navigator.userAgent;return /Mac/.test(u)?'mac':/Linux|X11/.test(u)?'linux':'win'}
+  function applyOs(o){osb.forEach(function(b){b.setAttribute('aria-pressed',b.dataset.os===o)});document.querySelectorAll('code[data-win]').forEach(function(c){var t=o==='win'?c.dataset.win:c.dataset.unix;c.textContent=t;var btn=c.parentNode.querySelector('.copy-button');if(btn)btn.dataset.copy=t});try{localStorage.setItem('qa-os',o)}catch(e){}}
+  osb.forEach(function(b){b.onclick=function(){applyOs(b.dataset.os)}});applyOs(curOs());
+  var toast=document.getElementById('toast');
+  function copy(s){(navigator.clipboard&&window.isSecureContext?navigator.clipboard.writeText(s):Promise.reject()).catch(function(){var a=document.createElement('textarea');a.value=s;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}).finally(function(){toast.classList.add('on');setTimeout(function(){toast.classList.remove('on')},1200)})}
+  document.querySelectorAll('[data-copy]').forEach(function(b){b.onclick=function(){copy(b.dataset.copy)}});
+  document.querySelectorAll('.tags code').forEach(function(c){c.onclick=function(){copy(c.textContent)}});
+  var boxes=document.querySelectorAll('.progress-card input'),pc=document.getElementById('pc'),pb=document.getElementById('pb');
+  function load(){try{return JSON.parse(localStorage.getItem('qa-progress')||'[]')}catch(e){return []}}
+  function render(){var n=0;boxes.forEach(function(x){if(x.checked)n++});pc.textContent=n+' / '+boxes.length;pb.style.width=(n/boxes.length*100)+'%'}
+  var saved=load();boxes.forEach(function(x){x.checked=saved.indexOf(x.dataset.s)>=0;x.onchange=function(){var s=[];boxes.forEach(function(y){if(y.checked)s.push(y.dataset.s)});try{localStorage.setItem('qa-progress',JSON.stringify(s))}catch(e){}render()}});render();
+  document.getElementById('reset').onclick=function(){boxes.forEach(function(x){x.checked=false});try{localStorage.removeItem('qa-progress')}catch(e){}render()};
+  var src=document.getElementById('cl-src').textContent,cl=document.getElementById('cl'),parts=src.split(/\n(?=## )/).filter(function(p){return /^## /.test(p)});
+  parts.forEach(function(p,i){var nl=p.indexOf('\n'),title=p.slice(3,nl).trim(),body=p.slice(nl+1);var d=document.createElement('details');if(i===0)d.open=true;
+    var s=document.createElement('summary');s.textContent=title;var b=document.createElement('div');b.className='body';b.innerHTML=window.marked?marked.parse(body.replace(/</g,'&lt;')):'';d.appendChild(s);d.appendChild(b);cl.appendChild(d)});
+})();
+</script>
+</body></html>
