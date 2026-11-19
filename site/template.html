@@ -6,7 +6,7 @@
 <body>
 <header class="site-header"><div class="header-inner">
   <a class="brand" href="#top"><span class="logo">群</span>群消息助手</a>
-  <nav class="header-nav"><a href="#start">快速上手</a><a href="#usage">日常用法</a><a href="#upgrade">升级</a><a href="#changelog">更新记录</a><a href="#faq">常见问题</a></nav>
+  <nav class="header-nav"><a href="#start">快速上手</a><a href="#usage">日常用法</a><a href="#upgrade">升级</a><a href="#faq">常见问题</a><a href="#changelog">更新记录</a></nav>
   <div class="theme-picker" role="group" aria-label="页面主题"><button data-t="auto">跟随系统</button><button data-t="light">浅色</button><button data-t="dark">深色</button></div>
 </div></header>
 <div class="shell">
@@ -18,9 +18,9 @@
   <a href="#start">快速上手</a>
   <a href="#usage">日常用法</a>
   <a href="#upgrade">升级</a>
-  <a href="#changelog">更新记录</a>
   <a href="#files">下载</a>
   <a href="#faq">常见问题</a>
+  <a href="#changelog">更新记录</a>
 </nav>
 <main class="page" id="top">
 <section class="hero">
@@ -118,12 +118,6 @@
   </div>
 </section>
 
-<section class="block" id="changelog">
-  <div class="section-heading"><div class="section-kicker">更新记录</div><h2>每个版本改了什么</h2></div>
-  <div class="changelog" id="cl"></div>
-  <script type="text/markdown" id="cl-src">{{CHANGELOG}}</script>
-</section>
-
 <section class="block" id="files">
   <div class="section-heading"><div class="section-kicker">下载</div><h2>文档和源码</h2></div>
   <div class="downloads">{{DOWNLOADS}}</div>
@@ -138,9 +132,16 @@
     <details><summary>凭据存在哪？</summary><p>都在你自己的电脑上（Windows <code>%USERPROFILE%\.qa-agent\config.json</code>，macOS / Linux <code>~/.qa-agent/config.json</code>），不上传、不进仓库；钉钉登录由你自己扫码。</p></details>
     <details><summary>用哪个 AI？</summary><p>你平时用哪个就用哪个，账号、API Key 你自己配，我们不管。部署时 AI 助手会把自己记成「判断用的 AI」；想换就对 AI 助手说「判断改用 Claude Code」。</p></details>
     <details><summary>Mac 上装在哪？</summary><p>装在 <code>~/qa-agent</code>，不要放桌面、文稿或下载：系统隐私保护会让后台任务读不到这些目录。</p></details>
+    <details><summary>跨版本升级会有影响吗？</summary><p>可以直接升级到最新版本，不需要逐级安装。升级会替换程序和部署文档，保留 <code>config.json</code>、<code>memory/</code>、<code>drafts/</code>、工作手册和角色职责库；新配置项只在原配置没有时使用默认值。v2.8 起所有回复先写草稿，必须由你确认后才发送；旧版本的自动回复设置升级后会按提醒群提示处理，不会在你不知情时继续自动发消息。升级前建议备份配置和工作手册，升级完成后重启并运行 <code>agent.py check</code>。</p></details>
     <details><summary>表情包为什么不会动？</summary><p>钉钉用 Markdown 图片发出时只显示第一帧，这是钉钉的限制。</p></details>
     <details><summary>遇到问题找谁？</summary><p>把 AI 助手的报错截图发给梦无矶。</p></details>
   </div>
+</section>
+
+<section class="block" id="changelog">
+  <div class="section-heading"><div class="section-kicker">更新记录</div><h2>每个版本改了什么</h2></div>
+  <div class="changelog" id="cl"></div>
+  <script type="text/markdown" id="cl-src">{{CHANGELOG}}</script>
 </section>
 </main>
 </div>

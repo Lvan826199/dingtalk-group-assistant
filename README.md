@@ -21,6 +21,8 @@
 
 部署文档可以一键生成成内网网页（`python3 site/build_site.py`），同事在浏览器里看步骤、复制命令、下载文档：
 
+公开版指南：<https://lvan826199.github.io/dingtalk-group-assistant/>
+
 | 上手步骤 + 进度勾选 | 日常用法（点指令就复制） |
 |---|---|
 | ![上手步骤](docs/images/start.jpg) | ![日常用法](docs/images/usage.jpg) |
