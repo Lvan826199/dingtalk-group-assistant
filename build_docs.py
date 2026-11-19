@@ -1,10 +1,10 @@
-"""把本目录的 agent.py / bootstrap_memory.py 嵌进两份文档（部署文档、升级说明），并做语法检查、同步共享盘。
-版本号取 agent.py 里的 VERSION，同时写进两份文档的版本行。用法：python3 -I build_docs.py"""
+"""把本目录的 agent.py / bootstrap_memory.py 嵌进最新部署文档，并做语法检查、同步共享盘。
+版本号取 agent.py 里的 VERSION，同时写进部署文档的版本行。用法：python3 -I build_docs.py"""
 import json, os, re, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); QA = os.path.join(HERE, "docs")
-DOCS = {"分享-可直接部署并运行AI监控钉钉群并自动处理.md": {"agent.py": "### 3.2 agent.py", "bootstrap_memory.py": "### 3.3 bootstrap_memory.py", "roles/角色职责库.json": "### 3.5 角色职责库.json"}}
+DOCS = {"分享-可直接部署并运行AI监控钉钉群并自动处理.md": {"agent.py": "### 3.2 agent.py", "bootstrap_memory.py": "### 3.3 bootstrap_memory.py", "roles/角色职责库.json": "### 3.5 角色职责库.json", "console.py": "### 3.6 console.py"}}   # 只维护内网一份部署文档（11-19 用户：不再单独出一位同事的升级说明）
 SHARE = os.environ.get("DOCS_SHARE_DIR", "")   # 可选：生成后同步到共享盘的目录
-src = {n: open(os.path.join(HERE, n), encoding="utf-8").read() for n in ("agent.py", "bootstrap_memory.py", "roles/角色职责库.json")}
+src = {n: open(os.path.join(HERE, n), encoding="utf-8").read() for n in ("agent.py", "bootstrap_memory.py", "roles/角色职责库.json", "console.py")}
 for n, code in src.items():
     json.loads(code) if n.endswith(".json") else compile(code, n, "exec")
 ver = re.search(r'VERSION = "([^"]+)"', src["agent.py"]).group(1)

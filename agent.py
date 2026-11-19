@@ -1,4 +1,4 @@
-"""群消息助手 v2（Windows / macOS / Linux，后台静默；v2.7 起不限 QA，按协作库角色适配全部角色）：dws 长连接监听 → 过滤 → AI 只读决策（Codex / Claude Code / WorkBuddy / Qoder / Trae 等，使用者自己装的那个）→ 脚本执行 → 记忆追加。
+"""群消息助手 v2（Windows / macOS / Linux，默认实时汇报；v2.7 起不限 QA，按协作库角色适配全部角色）：dws 长连接监听 → 过滤 → AI 只读决策（Codex / Claude Code / WorkBuddy / Qoder / Trae 等，使用者自己装的那个）→ 脚本执行 → 记忆追加。
 v2（2026-11-13）：全程不弹窗口（pythonw + 子进程隐藏 + 系统通知）；两路并行处理、同会话 20 秒内连发合并一次判断；
 积压时自动开子 Agent（临时多开 Codex 处理通道，最多 max_workers 个，空了自动退出）；
 每天上班把前一天总结发到本人自己的钉钉私聊；钉钉监听连续断开会提醒本人；
@@ -21,19 +21,22 @@ v2.3：自动回复后在提醒群发「💬 已自动回复」；草稿发到�
 v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：交给本人的事、草稿待确认、处理完成、监听异常、每天上班汇报都发进这个群，有推送、有历史；
 交给本人时先引用回复对方「收到，我确认一下再回复」；本人在该会话亲自回复 / review 发出或删除草稿后，机器人群里补一条「已处理」；status 命令看当天处理情况。
 只带相关记忆进提示词；两种模式：auto（默认，能回的直接回、拿不准交给本人）/ draft（全部写草稿等确认）；review 命令批量确认草稿。
-用法：pythonw agent.py            后台运行（Windows 计划任务这样启动；macOS / Linux 用 python3，由 launchd / systemd 托管）
+用法：pythonw agent.py            后台运行并自动打开汇报窗口（Windows 计划任务；macOS / Linux 用 python3，由 launchd / systemd 托管）
       python agent.py review     列出草稿，回编号批量发送 / 删除
       python agent.py send <草稿> 发送一条草稿
       python agent.py check      自检（环境、登录、配置）
       python agent.py status     今天处理了多少、还有几件没处理
+      python agent.py watch      打开只读实时汇报窗口，不重复启动监听
+      python agent.py watch --once  查看最近 20 条状态后退出
       python agent.py clear      清空待回复（没处理完的事和草稿全部清掉，不发出）
       python agent.py stickers   下载 / 更新内置表情包索引（v2.6）
       python agent.py audit [N]  看最近 N 条发出留痕（谁、何时确认、问过 AI 什么）（v2.8）
       python agent.py purge      立刻清掉原始记录（消息原文、群历史导出、旧日志），记忆和草稿不动（v2.7）
 配置 ~/.qa-agent/config.json（Windows 是 %USERPROFILE%\\.qa-agent\\config.json）；记忆在安装目录的 memory/（Windows C:\\qa-agent\\memory\\，macOS / Linux ~/qa-agent/memory/）。"""
-import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
+import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
+from collections import deque
 
-VERSION = "v2.9 2026-11-19"
+VERSION = "v3.0 2026-11-19"
 HOME = os.path.dirname(os.path.abspath(__file__))
 CFG_PATH = os.path.join(os.path.expanduser("~"), ".qa-agent", "config.json")
 DEFAULTS = {"my_name": "", "person_id": "", "roles": [], "project": "", "groups": {}, "readonly_groups": {}, "keywords": [], "people": [],
@@ -41,7 +44,7 @@ DEFAULTS = {"my_name": "", "person_id": "", "roles": [], "project": "", "groups"
             "burst_threshold": 3, "max_workers": 4, "ack_on_escalate": True, "notify_group": "", "scope_confirmed": False,
             "codex_model": "", "webhook": "", "secret": "", "window": ["09:00", "21:00"],
             "emoji": False, "emoji_names": ["赞", "OK", "收到", "谢谢", "辛苦了", "加油", "鼓掌"],
-            "keep_days": 30, "remind_after_minutes": 120, "status_notifications": True, "status_heartbeat_minutes": 15,
+            "keep_days": 30, "remind_after_minutes": 120, "status_notifications": False, "status_heartbeat_minutes": 15, "report_window": False,
             "update_url": "https://raw.githubusercontent.com/Lvan826199/dingtalk-group-assistant/main/agent.py", "update_page": "https://github.com/Lvan826199/dingtalk-group-assistant"}
 CFG = {**DEFAULTS, **json.load(open(CFG_PATH, encoding="utf-8"))}
 COORD = os.path.join(HOME, "project-coordination")
@@ -215,24 +218,191 @@ LISTENERS = {}      # tag -> {started, alive}
 LAST_EVENT = {"t": 0, "summary": ""}
 
 
-def log(*a):
+def log(*a, console=True):
     line = dt.datetime.now().strftime("%H:%M:%S ") + " ".join(str(x) for x in a)
     with LOCK:
         LOG.write(line + "\n"); LOG.flush()
-    if sys.stdout and sys.stdout.isatty():
-        print(line, flush=True)
+    if console and sys.stdout and sys.stdout.isatty():
+        console_write(line)
 
 
-def status_event(stage, detail="", announce=False):
+def report_text(value, limit=800):
+    """运行窗口只展示摘要；配置中的机器人凭据和常见密钥字段打码。"""
+    text = str(value or "")
+    for key in ("webhook", "secret"):
+        if CFG.get(key):
+            text = text.replace(str(CFG[key]), "[已隐藏]")
+    text = re.sub(r"(?i)(\b(?:access_token|token|secret|password|x-internal-key)\b[\"']?\s*[:=]\s*[\"']?)[^\s,\"'}]+", r"\1[已隐藏]", text)
+    text = re.sub(r"(?i)(\bauthorization\s*[:=]\s*)(?:Bearer\s+)?[^\s,]+", r"\1[已隐藏]", text)
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]|[\x00-\x1f\x7f-\x9f]", " ", text)
+    return " ".join(text.split())[:limit]
+
+
+def console_write(text):
+    if sys.stdout is None:
+        return
+    try:
+        try:
+            print(text, flush=True)
+        except UnicodeEncodeError:
+            encoding = sys.stdout.encoding or "utf-8"
+            print(text.encode(encoding, errors="backslashreplace").decode(encoding), flush=True)
+    except (BrokenPipeError, OSError):
+        pass
+
+
+def format_report(rec):
+    stamp = report_text(rec.get("time"), 30)
+    stage = report_text(rec.get("stage"), 40)
+    context = " / ".join(report_text(rec.get(k), 80) for k in ("group", "sender") if rec.get(k))
+    ref = report_text(rec.get("message_id"), 100)
+    title = f"[{stamp}] {stage}" + (f" · {context}" if context else "") + (f" · msg={ref}" if ref else "")
+    lines = [title]
+    if rec.get("preview"):
+        lines.append("  原消息：" + report_text(rec["preview"], 180))
+    if rec.get("detail"):
+        lines.append("  " + report_text(rec["detail"]))
+    return "\n".join(lines)
+
+
+def status_event(stage, detail="", announce=False, event=None):
     """把值守状态落盘；announce=True 时同步发提醒群，避免助手静默卡住。"""
     rec = {"time": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "stage": stage,
-           "detail": str(detail)[:800], "pid": os.getpid(), "version": VERSION}
+           "detail": report_text(detail), "pid": os.getpid(), "version": VERSION}
+    if event:
+        cid = event.get("conversation_id")
+        rec.update(group=report_text({**CFG["groups"], **CFG["readonly_groups"]}.get(cid, "提醒群" if cid == CFG.get("notify_group") else "私聊/其他会话"), 80),
+                   sender=report_text(event.get("sender"), 80), message_id=report_text(event.get("message_id"), 100))
+        if stage in ("收到消息", "开始处理"):
+            rec["preview"] = report_text(event.get("content"), 180)
     with LOCK:
         with open(STATUS_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    log("状态", stage, detail)
-    if announce and CFG.get("status_notifications", True):
-        notify(f"📡 {stage}", str(detail)[:800])
+    log("状态", stage, rec["detail"], console=False)
+    if sys.stdout and sys.stdout.isatty():
+        console_write(format_report(rec))
+    # v3.0：值守状态改在操作台顶栏看（绿点），提醒群默认不再刷「收到消息 / 心跳」；出问题的还照发
+    if announce and (CFG.get("status_notifications") or stage in ("监听异常", "发送失败", "处理失败", "汇报窗口未打开")):
+        notify(f"📡 {stage}", format_report(rec) if event else rec["detail"])
+
+
+def report_records(path, follow=True, tail=20):
+    """只读状态日志；保留半行，支持文件截断/替换，不碰监听或消费游标。"""
+    offset, identity, initial = 0, None, True
+    while True:
+        records = deque(maxlen=tail) if initial else []
+        try:
+            with open(path, "rb") as f:
+                st = os.fstat(f.fileno())
+                current = (st.st_dev, st.st_ino)
+                if current != identity or st.st_size < offset:
+                    offset = 0
+                identity = current
+                f.seek(offset)
+                while True:
+                    line = f.readline()
+                    if not line or not line.endswith(b"\n"):
+                        break
+                    offset = f.tell()
+                    try:
+                        rec = json.loads(line.decode("utf-8"))
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+                    if isinstance(rec, dict):
+                        records.append(rec)
+        except FileNotFoundError:
+            pass
+        yield from records
+        initial = False
+        if not follow:
+            return
+        yield None
+
+
+def report_window_lock():
+    """一个安装目录只保留一份自动查看器；锁随进程退出释放，不触碰事件。"""
+    f = open(os.path.join(HOME, "logs", "report-window.lock"), "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            if os.fstat(f.fileno()).st_size == 0:
+                f.write(b"0"); f.flush()
+            f.seek(0); msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return f
+    except OSError:
+        f.close()
+        return None
+
+
+def open_report_window():
+    """默认随后台打开只读查看器。已有交互终端直接输出；查看器不属于监听子进程。"""
+    if CFG.get("report_window") is False:
+        status_event("汇报窗口", "已按本机设置关闭自动开窗，状态仍写入日志")
+        return
+    if sys.stdout and sys.stdout.isatty():
+        status_event("汇报窗口", "实时汇报已在当前终端显示")
+        return
+    try:
+        lock = report_window_lock()
+        if lock is None:
+            status_event("汇报窗口", "已有自动汇报窗口，继续使用，不重复打开")
+            return
+        lock.close()
+        args = [sys.executable, "-u", os.path.abspath(__file__), "watch", "--auto"]
+        if sys.platform == "win32":
+            # pythonw 不附带控制台；查看器必须用同目录的 python.exe，且不能套 NOWIN。
+            if os.path.basename(args[0]).lower() == "pythonw.exe":
+                args[0] = os.path.join(os.path.dirname(args[0]), "python.exe")
+            subprocess.Popen(args, cwd=HOME, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10))
+        elif sys.platform == "darwin":
+            script = os.path.join(HOME, "logs", "实时汇报.command")
+            with open(script, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\nexec " + shlex.join(args) + "\n")
+            os.chmod(script, 0o700)
+            r = run(["/usr/bin/open", "-a", "Terminal", script], timeout=15)
+            if r.returncode:
+                raise OSError((r.stderr or r.stdout or "Terminal 启动失败")[:200])
+        else:
+            if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+                raise OSError("没有图形桌面会话，无法开终端窗口；后台继续运行，状态写入 logs/status.jsonl")
+            terminals = [("x-terminal-emulator", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"), ("xterm", "-e")]
+            terminal = next(([exe, sep] for name, sep in terminals if (exe := shutil.which(name))), None)
+            if not terminal:
+                raise OSError("未找到终端程序；请安装桌面终端或在本机终端运行 agent.py watch")
+            subprocess.Popen(terminal + args, cwd=HOME, start_new_session=True)
+        status_event("汇报窗口", "已请求打开实时汇报窗口；窗口会自行显示最近记录和新状态")
+    except (OSError, subprocess.SubprocessError) as ex:
+        detail = report_text(ex)
+        status_event("汇报窗口未打开", detail)
+        notify("⚠️ 实时汇报窗口未打开", detail + "。后台继续运行；查看日志或在终端运行 agent.py watch。")
+
+
+def watch(once=False, auto=False):
+    lock = report_window_lock() if auto else None
+    if auto and lock is None:
+        console_write("已有自动汇报窗口，本窗口退出，不启动监听。")
+        return
+    console_write("群消息助手 · 实时汇报（只读查看，不启动第二套监听；Ctrl+C 只关闭查看窗口）")
+    last, shown, pulse = None, 0, time.monotonic()
+    try:
+        for rec in report_records(STATUS_LOG, follow=not once):
+            if rec is not None:
+                console_write(format_report(rec)); last = rec; shown += 1; pulse = time.monotonic()
+            else:
+                if time.monotonic() - pulse >= 60:
+                    console_write("等待新状态；最后记录：" + report_text((last or {}).get("time") or "暂无") + "。此窗口仅展示日志，进程存活和处理结果需结合状态核对。")
+                    pulse = time.monotonic()
+                time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if lock:
+            lock.close()
+    if not shown:
+        console_write("尚无状态记录；请确认后台助手已启动，升级后已重启运行。")
 
 
 def status_snapshot():
@@ -248,7 +418,7 @@ def heartbeat_loop():
         mins = max(1, int(CFG.get("status_heartbeat_minutes") or 15))
         time.sleep(mins * 60)
         if in_window():
-            status_event("心跳", status_snapshot(), announce=bool(CFG.get("status_notifications", True)))
+            status_event("心跳", status_snapshot(), announce=bool(CFG.get("status_notifications")))
 
 
 def in_window():
@@ -285,6 +455,42 @@ def notify(title, text):
     return ok
 
 
+def setup_notify(wait_minutes=15):
+    """v3.0：提醒群自动建好（dws 建群，只有本人），再引导本人在群里加自定义机器人。
+    钉钉开放接口不支持创建自定义机器人、也拿不到它的地址和密钥，这一步只能本人在群设置里点（约 1 分钟）；
+    本人把地址和加签密钥直接发在这个群里，助手读到后自己写进配置、发一条自检，不用手改任何文件。"""
+    cid = CFG.get("notify_group")
+    if not cid:
+        name = f"群消息助手·{CFG.get('my_name') or '提醒'}"
+        r = run([DWS, "chat", "+chat-create", "--name", name, "--yes", "--format", "json"], timeout=90)
+        m = re.search(r'"openConversationId"\s*:\s*"([^"]+)"', r.stdout or "")
+        if not m:
+            print("建群失败：", (r.stdout or r.stderr or "")[:300]); return False
+        cid = m.group(1); save_cfg("notify_group", cid); print(f"已建好提醒群「{name}」（只有你一个人）")
+    steps = ("这是你的群消息助手提醒群，只有你自己。还差一步（钉钉不允许程序代建机器人，要你点一下，约 1 分钟）：\n"
+             "1. 电脑钉钉打开本群 → 右上角「群设置」→「机器人」→「添加机器人」→「自定义」\n"
+             "2. 名字随便填（比如「助手」），安全设置勾「加签」，复制那串以 SEC 开头的密钥\n"
+             "3. 点「完成」，复制 Webhook 地址\n"
+             "4. 把 **Webhook 地址** 和 **SEC 密钥** 直接发在本群（一条或两条都行）\n"
+             "助手读到后自动写进配置，再发一条「🧪 助手自检」，你在群里看到就好了。")
+    run([DWS, "chat", "+messages-send", "--group", cid, "--markdown", steps, "--yes", "--format", "json"], timeout=60)
+    print("已在提醒群发了加机器人的步骤；把 Webhook 地址和 SEC 密钥发进群里，我等你", wait_minutes, "分钟")
+    since, hook, sec, end = dt.datetime.now() - dt.timedelta(minutes=1), CFG.get("webhook") or "", CFG.get("secret") or "", time.time() + wait_minutes * 60
+    while time.time() < end and not (hook and sec):
+        time.sleep(10)
+        r = run([DWS, "chat", "message", "list", "--group", cid, "--time", f"{since:%Y-%m-%d %H:%M:%S}", "--direction", "newer", "--limit", "20", "--format", "json"], timeout=60)
+        text = r.stdout or ""
+        m = re.search(r"https://oapi\.dingtalk\.com/robot/send\?access_token=[0-9a-f]{20,}", text)
+        hook = m.group(0) if m else hook
+        m = re.search(r"\bSEC[0-9a-f]{40,}\b", text)
+        sec = m.group(0) if m else sec
+    if not (hook and sec):
+        print("没等到地址和密钥；发进群后再运行一次：python agent.py setup-notify"); return False
+    save_cfg("webhook", hook); save_cfg("secret", sec)
+    ok = notify("🧪 助手自检", "提醒机器人配好了：以后草稿、提醒、日报都从这里发。\n建议把群里那两条带地址和密钥的消息撤回或删除。")
+    print("机器人已配置，自检", "成功" if ok else "失败（核对是否勾了「加签」、地址是否完整）"); return ok
+
+
 OPEN_PATH = os.path.join(HOME, "logs", "open.json")      # 还没处理完的事：{编号: {...}}
 
 
@@ -314,6 +520,7 @@ def open_close(no, why):
     x = d.pop(no, None)
     if x:
         _open_save(d); log("已处理", no, why)
+        status_event("事项已关闭", f"{no}：{why}", event=x.get("event"))
         notify(f"✅ {no} 已处理", f"{x['who']}：{x['what']}\n{why}")
 
 
@@ -545,6 +752,7 @@ def ask_ai(no, question):
     if not x and not d:
         notify(f"❓ 没找到 {no}", "可能已经处理完了。发「待回复」看还有哪些。"); return
     ev = (d or {}).get("event") or x.get("event") or {}
+    status_event("正在回答追问", f"{no}：{question}", event=ev)
     draft = (d or {}).get("draft", "")
     qa = (x or {}).get("qa", [])
     prompt = ("你是我的群消息助手。我在决定怎么处理下面这条群消息前，想先问清楚。只输出一行 JSON："
@@ -571,6 +779,7 @@ def ask_ai(no, question):
             dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
             json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     notify(f"💡 {no} AI 的回答", (ans or "（没有回答）") + (f"\n\n新草稿：{nd}\n要发就回「{no} 可以发送」，再改回「{no} 改成：…」，继续问回「{no} 问：…」。" if nd else f"\n\n还想问就继续「{no} 问：…」；决定好了回「{no} 可以发送」/「{no} 不发」，或自己在原会话回。"))
+    status_event("追问已回答", f"{no}：{ans}" + ("；草稿已更新，待本人确认" if nd else ""), event=ev)
 
 
 def command(e):
@@ -624,7 +833,14 @@ def list_drafts_to_group():
     drafts = {d.get("todo"): d["draft"] for d in (json.load(open(f, encoding="utf-8")) for f in glob.glob(os.path.join(HOME, "drafts", "*.json")))}
     rows = [f"{no} {x['at']} {x['who']}：{x['what'][:40]}" + (f" → 草稿：{drafts[no][:60]}" if no in drafts else "（还没草稿）")
             for no, x in _open_load().items()]
-    notify(f"📋 待回复 {len(rows)} 件", "\n".join(rows) + "\n回「#编号 暂存：内容」存草稿不发，「#编号 可以发送」发出，「清空」全部清掉" if rows else "没有")
+    link = ""
+    try:
+        import console                                                     # v3.0：附上操作台链接，点开在页面里处理
+        if console.A:
+            link = f"\n\n[打开操作台看全部、直接处理]({console.url()})"
+    except Exception:
+        pass
+    notify(f"📋 待回复 {len(rows)} 件", "\n".join(rows) + "\n回「#编号 暂存：内容」存草稿不发，「#编号 可以发送」发出，「清空」全部清掉" + link if rows else "没有" + link)
 
 
 def relevant(e):
@@ -632,12 +848,14 @@ def relevant(e):
     if CFG.get("notify_group") and e.get("conversation_id") == CFG["notify_group"]:
         if sender == CFG["my_name"] and e.get("message_id") not in SEEN:
             SEEN.add(e.get("message_id"))
+            status_event("收到消息", "收到本人在提醒群的指令", event=e)
             try:
                 if sticker_command(str(e.get("content") or "").strip()) or group_command(str(e.get("content") or "").strip()):
                     return False
-                list_drafts_to_group() if str(e.get("content") or "").strip() in ("草稿", "看草稿", "待回复", "待回复详细") else command(e)
+                list_drafts_to_group() if re.fullmatch(r"(看)?草稿|待回复(详细)?|.{0,6}(待办|待处理|要处理|没处理|没回)(的)?(事|消息)?(有哪些|有什么|吗|呢)?[？?]?|还有(什么|啥|哪些)(事|要处理的|没处理的)?[？?]?", str(e.get("content") or "").strip()) else command(e)
             except Exception as ex:
                 log("提醒群指令处理失败", repr(ex))
+                status_event("处理失败", f"提醒群指令：{ex!r}", event=e)
         return False                                                       # 提醒群里的消息不交给 AI
     if sender == CFG["my_name"] and e.get("conversation_id"):
         if BQB_CDN in str(e.get("content") or ""):
@@ -651,7 +869,7 @@ def relevant(e):
     if e.get("message_id") in SEEN:
         return False
     text = str(e.get("content") or "") + json.dumps(e.get("quoted_message") or "", ensure_ascii=False)
-    return any(k in text for k in CFG["keywords"] + [CFG["my_name"], "@所有人", "@全体成员"]) or sender in CFG["people"]   # @所有人 也要看（11-19 被漏过）
+    return any(k in text for k in CFG["keywords"] + [CFG["my_name"], "@所有人", "@全体成员"]) or sender in CFG["people"]   # @所有人 也要看（11-19：「@所有人 安卓 1.1.1 已提审」被漏）
 
 
 def backfill_loop():
@@ -673,6 +891,7 @@ def backfill_loop():
                 if e["message_id"] and relevant(e):
                     SEEN.add(e["message_id"]); Q.put(e)
                     log("补读到漏掉的消息", name, e["sender"], str(e["content"])[:60])
+                    status_event("收到消息", "断线/续期间隙补读，已加入处理队列", event=e)
         since = now - dt.timedelta(minutes=2)   # 和上一轮留 2 分钟重叠，SEEN 去重
 
 
@@ -708,7 +927,7 @@ def listen(args, tag):
                 if relevant(e):
                     SEEN.add(e.get("message_id")); Q.put(e)
                     LAST_EVENT.update(t=time.time(), summary=f"{tag} / {e.get('sender')}：{str(e.get('content') or '')[:80]}")
-                    status_event("收到消息", LAST_EVENT["summary"], announce=True)
+                    status_event("收到消息", "已加入处理队列，等待合并同一会话的消息", announce=True, event=e)
             p.wait()
             if time.time() - t0 < 60 and not got:                             # 不到 1 分钟就断、一条都没收到 = 异常（登录过期、网络等）
                 FAILS[tag] = FAILS.get(tag, 0) + 1
@@ -825,7 +1044,9 @@ def reply(e, text, keep_draft=True):
             dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
             json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         send_failed(e, text, err, no)
+        status_event("发送失败", f"{no}：{err}；草稿保留，尚未发出", event=e)
         raise SendFailed("回复失败：" + err)
+    status_event("已发送", "钉钉返回发送成功：" + text, event=e)
 
 
 def save_draft(e, text, sticker="", reason=""):
@@ -842,9 +1063,9 @@ def handle(batch):
     log("决定", e.get("sender"), d.get("action"), d.get("risk"), d.get("reason"), d.get("emoji") or "", d.get("sticker") or "")
     ats = re.findall(r"@([^\s@]+)", str(e.get("content") or ""))
     if ats and CFG["my_name"] not in ats and "所有人" not in ats:              # @ 的是别人：不插话（v2.6，11-18 梦无矶回了 项目助手 @ 另一位同事 的消息）
-        log("别人之间的对话，不回", e.get("sender"), ats[:3]); return
+        log("别人之间的对话，不回", e.get("sender"), ats[:3]); return "别人之间的对话，不回复、不生成草稿"
     if d.get("action") == "ignore":
-        return
+        return "不回复：" + (d.get("reason") or "按职责和群规则跳过")
     brief = f"{e.get('sender')}：{str(e.get('content'))[:200]}"
     if d.get("mine") is not True and d.get("action") == "reply":
         d["action"] = "escalate"                                           # 不确定归我就不替我回（v2.5.1）
@@ -855,7 +1076,7 @@ def handle(batch):
             notify(f"🔔 {no} 需要你处理", f"{brief}\n原因：{d.get('reason')}\n想先问清楚：回「{no} 问：……」。你在原会话回复后，这里会自动补一条「已处理」。")
         else:
             notify(f"❓ {no} 是不是归你？", f"{brief}\n原因：{d.get('reason')}\n群里没回任何话。归你就在原会话自己回；不归你在这里回「{no} 不归我」；拿不准回「{no} 问：……」。")
-        return
+        return f"{no} 等待本人处理，原群未回复；原因：" + (d.get("reason") or "需要本人判断")
     sticker = d.get("sticker") if CFG.get("emoji") and d.get("sticker") in stickers() else ""
     name = save_draft(e, d.get("text", ""), sticker=sticker, reason=d.get("reason") or "")
     no = open_add(e, "draft", "草稿：" + d.get("text", "")[:20])
@@ -863,6 +1084,7 @@ def handle(batch):
     json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     notify(f"📝 {no} 草稿待你确认", f"{brief}\n草稿：{d.get('text', '')[:200]}" + (f"\n配表情包：{sticker}" if sticker else "") + f"\n依据：{(d.get('reason') or '')[:120]}"
            f"\n回：「{no} 可以发送」/「{no} 不发」/「{no} 改成：新内容」/「{no} 问：……」")
+    return f"{no} 草稿待确认，尚未发送；依据：{d.get('reason') or 'AI 未提供依据'}；草稿：{d.get('text', '')}"
 
 
 ACTIVE = {"n": 0}
@@ -898,16 +1120,16 @@ def worker(temp=False):
             with LOCK, open(os.path.join(HOME, "inbox.jsonl"), "a", encoding="utf-8") as f:
                 for x in batch:
                     f.write(json.dumps({**x, "_t": int(time.time())}, ensure_ascii=False) + "\n")   # _t：保留期清理用
-            status_event("开始处理", f"{batch[-1].get('sender')}：{str(batch[-1].get('content') or '')[:100]}", announce=True)
+            status_event("开始处理", f"合并同一会话 {len(batch)} 条消息，正在核对职责、记忆和判断依据", announce=True, event=batch[-1])
             try:
-                handle(batch)
-                status_event("处理完成", f"{batch[-1].get('sender')}：{str(batch[-1].get('content') or '')[:100]}", announce=True)
+                result = handle(batch)
+                status_event("处理完成", result or "本批处理结束，具体发送/待办状态见记录", announce=True, event=batch[-1])
             except SendFailed:
-                status_event("处理完成", "消息已转为草稿，等待发送恢复或本人确认", announce=True)
+                status_event("等待重发", "消息已转为草稿，等待发送恢复或本人确认，尚未发出", announce=True, event=batch[-1])
                 pass                                                       # 发不出去已用机器人通知本人，回复存成了草稿
             except Exception as ex:
                 e = batch[-1]
-                log("处理失败", repr(ex)); status_event("处理失败", f"{e.get('sender')}：{str(e.get('content'))[:120]}\n{ex!r}"[:300], announce=True)
+                log("处理失败", repr(ex)); status_event("处理失败", repr(ex)[:300], announce=True, event=e)
     finally:
         with LOCK:
             ACTIVE["n"] -= 1
@@ -1131,6 +1353,12 @@ def check():
 
 
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "watch":
+        if sys.argv[2:] not in ([], ["--once"], ["--auto"]):
+            raise SystemExit("用法：python agent.py watch [--once]")
+        return watch(once="--once" in sys.argv[2:], auto="--auto" in sys.argv[2:])
+    if len(sys.argv) >= 2 and sys.argv[1] == "setup-notify":
+        setup_notify(); return
     if len(sys.argv) >= 2 and sys.argv[1] == "clear":
         n, k = clear_all(); print(f"已清空：{n} 件没处理完的事、{k} 份草稿，都没有发出"); return
     if len(sys.argv) >= 2 and sys.argv[1] == "audit":
@@ -1149,6 +1377,7 @@ def main():
         reply(d["event"], d["draft"]); audit(d.get("todo", ""), d["event"], d["draft"], "命令行 send 确认", reason=d.get("reason", "")); os.remove(os.path.join(HOME, "drafts", sys.argv[2])); print("已发送"); return
     if not in_window():
         log("窗口外，不启动"); return
+    open_report_window()
     if CFG.get("notify_group"):
         threading.Thread(target=listen, args=(["--kind", "group", "--chat-id", CFG["notify_group"]], "提醒群"), daemon=True).start()
     for cid, name in {**CFG["groups"], **CFG["readonly_groups"]}.items():
@@ -1162,6 +1391,12 @@ def main():
     threading.Thread(target=supervisor, daemon=True).start()
     log("启动", VERSION, "（无自动回复，草稿确认）")
     status_event("已上岗", status_snapshot(), announce=True)
+    try:                                                                   # v3.0 本机操作台：页面上直接处理，和提醒群指令同步
+        import console
+        if console.start(globals()):
+            notify("🖥 打开操作台", f"[点这里打开操作台]({console.url()})\n只能在本机打开；有新的要处理会弹桌面通知，处理后提醒群和页面同步。")
+    except Exception as ex:
+        log("操作台没开起来", repr(ex)[:200])
     threading.Thread(target=morning_report, daemon=True).start()
     threading.Thread(target=dws_version_check, daemon=True).start()
     threading.Thread(target=reminder_loop, daemon=True).start()

@@ -4,3 +4,4 @@ logs/
 drafts/
 memory/
 .DS_Store
+.tmp/

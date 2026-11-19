@@ -2,13 +2,13 @@
 
 [![test](https://github.com/Lvan826199/dingtalk-group-assistant/actions/workflows/test.yml/badge.svg)](https://github.com/Lvan826199/dingtalk-group-assistant/actions/workflows/test.yml) ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-监听钉钉群消息，按你的角色和职责范围判断每一条：能答的写好回复，拿不准的交给你，不归你的不插话。全程后台静默，提醒只走你自己的提醒群机器人。
+监听钉钉群消息，按你的角色和职责范围判断每一条：能答的写好回复，拿不准的交给你，不归你的不插话。后台运行，默认自动打开实时汇报窗口，提醒走你自己的提醒群机器人。
 
 ![新手指南网页](docs/images/hero.jpg)
 
 - **任意 AI 编程助手**：Codex、Claude Code、DSH、WorkBuddy、Trae、Qoder 等，你平时用哪个就用哪个（账号、API Key 自己配）
 - **Windows / macOS / Linux**：开机自启分别用计划任务 / LaunchAgent / systemd
-- **安全默认**：群聊默认只提醒不回复，开自动回复要二次确认；绝不替你接需求、排期、承诺；别人之间的对话不插话
+- **本人确认后发送**：所有回复先写草稿，你确认后才发；绝不替你接需求、排期、承诺；别人之间的对话不插话
 - **全角色**：内置角色职责库（产品、研发各端、测试、运营、后台、项目负责人），也能接你们自己的项目协作库
 
 ## 怎么用
@@ -16,6 +16,14 @@
 把 [`docs/分享-可直接部署并运行AI监控钉钉群并自动处理.md`](docs/分享-可直接部署并运行AI监控钉钉群并自动处理.md) 拖进你的 AI 编程助手，发「开始」。之后它每一步都给你编号选项，回数字就行。
 
 已经装过的：发「升级到 <版本号>」，升级不会覆盖你已有的规则。
+
+## 实时汇报（v2.10 起）
+
+默认随助手启动自动显示，无需另外运行命令：Windows 自动打开独立控制台（后台仍用 pythonw），macOS 打开「终端」，Linux 桌面环境打开可用终端；已有前台终端就直接在原窗口输出。Linux 无图形桌面时会明确提示，并继续写日志。
+
+窗口先显示最近 20 条，再跟随收到消息、开始处理、忽略原因、待你决定、草稿待确认和真实发送结果。只读日志，不重复监听、不消费事件；关闭它不影响独立后台，已有自动查看器时不重复开窗。升级后重启后台即可，机器人通知偏好保留，草稿仍需本人确认后才发送；显式配置 `report_window: false` 可关闭自动开窗。
+
+临时重开：Windows 用 `python C:\qa-agent\agent.py watch`，macOS / Linux 用 `python3 ~/qa-agent/agent.py watch`；加 `--once` 只看最近 20 条。这是排查用的备用命令。窗口不向已有的 AI 对话自动插入日志，窗口存在也不能证明每条消息已处理。
 
 ## 截图
 

@@ -79,3 +79,7 @@ section.block{padding:56px 0;border-top:1px solid var(--border)}
 .side-toc a{font-size:14px;color:var(--muted);padding:6px 10px;border-radius:7px;text-decoration:none;border-left:2px solid transparent}
 .side-toc a:hover{color:var(--text);background:var(--surface-soft);text-decoration:none}
 .side-toc a.on{color:var(--blue);background:var(--blue-soft);border-left-color:var(--blue);font-weight:600}
+.shot{margin:22px 0;border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(26,43,76,.10);background:var(--surface)}.shot img{display:block;width:100%;height:auto}
+.feature-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:8px 0}.feature{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px}
+.feature h3{margin:0 0 6px;font-size:16px}.feature p{margin:0;color:var(--muted);font-size:14.5px;line-height:1.7}
+@media (max-width:900px){.feature-grid{grid-template-columns:1fr}}
