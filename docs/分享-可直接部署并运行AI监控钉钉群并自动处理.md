@@ -2602,7 +2602,17 @@ def thread(no):
     return sorted(rows, key=lambda m: m["time"])
 
 
+NAMES = {}                # cid → 钉钉里的群名（按需查一次，缓存）
 HISTORY_N = 30            # 历史消息：每个群看最近 30 条（只为页面上翻看方便，全量去钉钉看）
+
+
+def ding_name(cid, fallback):
+    """群名按钉钉里的真实名字显示（11-19），查不到就用配置里的叫法。"""
+    if cid not in NAMES:
+        r = A["run"]([A["DWS"], "chat", "+conversation-info", "--group", cid, "--format", "json"], timeout=30)
+        m = re.search(r'"title"\s*:\s*"([^"]+)"', getattr(r, "stdout", "") or "")
+        NAMES[cid] = m.group(1) if m else ""
+    return NAMES[cid] or fallback
 
 
 def history(cid):
@@ -2662,7 +2672,7 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/state":
             return self._send(200, json.dumps(state(), ensure_ascii=False))
         if u.path == "/api/groups":
-            return self._send(200, json.dumps([{"cid": c, "name": n} for c, n in _groups().items()], ensure_ascii=False))
+            return self._send(200, json.dumps([{"cid": c, "name": ding_name(c, n)} for c, n in _groups().items()], ensure_ascii=False))
         if u.path == "/api/history":
             return self._send(200, json.dumps(history((urllib.parse.parse_qs(u.query).get("cid") or [""])[0]), ensure_ascii=False))
         if u.path == "/api/thread":
