@@ -136,3 +136,26 @@ def test_console_lan_mode_link_uses_lan_address(make_agent):
     assert console.url().startswith("http://127.0.0.1:")
     a.CFG["console_host"] = "0.0.0.0"; a.CFG["console_url_host"] = "10.0.0.9"
     assert console.lan() and console.url().startswith("http://10.0.0.9:")
+
+
+def test_console_opens_browser_on_start(make_agent, monkeypatch):
+    a, notes, _ = make_agent({"console_port": _port()})
+    opened = []
+    a.popen = lambda args, **k: opened.append(args[-1])
+    monkeypatch.setattr(a.os, "startfile", lambda u: opened.append(u), raising=False)
+    a.in_window = lambda: True
+    sys.path.insert(0, a.HOME)
+    import importlib; console = importlib.import_module("console"); importlib.reload(console)
+    console.start(vars(a)); console.popup()
+    assert opened and opened[0].startswith("http://127.0.0.1:")
+
+
+def test_history_by_group(make_agent):
+    import json as _j
+    a, console, *_ = _boot(make_agent)
+    a.run = lambda args, **k: R(0, _j.dumps({"messages": [{"sender": "乙", "createTime": "2026-11-19 10:02:00", "content": "二"}, {"sender": "甲", "createTime": "2026-11-19 10:01:00", "content": "一"}]}))
+    gs = json.loads(_get(console, "/api/groups").read())
+    assert gs == [{"cid": "cidG", "name": "测试群"}]
+    h = json.loads(_get(console, "/api/history?cid=cidG").read())
+    assert [m["text"] for m in h] == ["一", "二"]                                  # 按时间正序
+    assert json.loads(_get(console, "/api/history?cid=cidX").read()) == []      # 没监听的群不给看

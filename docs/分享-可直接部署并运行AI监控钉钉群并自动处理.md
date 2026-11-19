@@ -4,7 +4,7 @@
 >
 > 作者：梦无矶　版本：v3.0 2026-11-19（命令行实时汇报；决策权交给人；状态可见；全角色、任意 AI、Windows / macOS / Linux）　适用：Windows / macOS / Linux + 任一 AI 编程助手（Codex / Claude Code / DSH / WorkBuddy / Trae / Qoder 等）+ 钉钉 CLI（`dws`）
 >
-> **已经装过的同事升级到 v3.0**：把本文件拖进你的 AI 助手，发「升级到最新版」。先停止旧后台，替换 `C:\qa-agent\agent.py`、`bootstrap_memory.py`，**新增** `C:\qa-agent\console.py`（用第三节 3.2、3.3、3.6 的代码），`角色职责库.json` 没有就按 3.5 写入、已有就不覆盖，**保留** `config.json`、`memory\`、`drafts\`、`工作手册.md`。重新启动后台，运行 `python C:\qa-agent\agent.py check` 看到「版本 v3.0」；提醒群会收到「打开操作台」链接。v3.0 起提醒群不再刷「收到消息 / 心跳」这类值守状态（出问题仍提醒），值守状态看操作台顶栏的绿点；原来的汇报窗口默认关闭。无需新增配置。
+> **已经装过的同事升级到 v3.0**：把本文件拖进你的 AI 助手，发「升级到最新版」。先停止旧后台，替换 `C:\qa-agent\agent.py`、`bootstrap_memory.py`，**新增** `C:\qa-agent\console.py`（用第三节 3.2、3.3、3.6 的代码），`角色职责库.json` 没有就按 3.5 写入、已有就不覆盖，**保留** `config.json`、`memory\`、`drafts\`、`工作手册.md`。重新启动后台，运行 `python C:\qa-agent\agent.py check` 看到「版本 v3.0」；重启后浏览器会自动打开操作台。v3.0 起提醒群不再刷「收到消息 / 心跳」这类值守状态（出问题仍提醒），值守状态看操作台顶栏的绿点；原来的汇报窗口默认关闭。无需新增配置。
 
 ---
 
@@ -1796,6 +1796,8 @@ def main():
     try:                                                                   # v3.0 本机操作台：页面上直接处理，和提醒群指令同步
         import console
         if console.start(globals()):
+            if CFG.get("open_on_start", True) and not console.lan():   # 上岗 / 部署 / 升级后自动在浏览器打开操作台，不用复制链接（11-19）
+                console.popup()
             notify("🖥 打开操作台", f"[点这里打开操作台]({console.url()})\n" + ("内网其他电脑也能打开（链接带密钥，别外传）" if console.lan() else "只能在本机打开；有新的要处理会弹桌面通知") + "，处理后提醒群和页面同步。")
     except Exception as ex:
         log("操作台没开起来", repr(ex)[:200])
@@ -2417,7 +2419,7 @@ loginctl enable-linger $USER    # 可选：不登录桌面也运行（需要管�
 
 ### 3.6 console.py（v3.0 本机操作台，写入 `C:\qa-agent\console.py`，和 agent.py 放一起）
 
-助手启动时自动开：只监听本机 `127.0.0.1:8765`（`console_port` 可改），链接带密钥。三列「要你判断 / 草稿待发 / 已处理」，点卡片看原会话、改草稿、问 AI、发送；页面上的操作和提醒群指令走同一条路，三处同步。有新的要处理时自动用浏览器弹出操作台（60 秒内最多一次；提醒群「弹出 关」关掉），并弹桌面通知。
+助手启动时自动开：只监听本机 `127.0.0.1:8765`（`console_port` 可改），链接带密钥。三列「要你判断 / 草稿待发 / 已处理」，点卡片看原会话、改草稿、问 AI、发送；页面上的操作和提醒群指令走同一条路，三处同步。助手上岗（部署完、升级重启后、每天自启时）会**自动在默认浏览器打开操作台**，不用复制链接（`open_on_start: false` 关掉）；有新的要处理时也自动用浏览器弹出操作台（60 秒内最多一次；提醒群「弹出 关」关掉），并弹桌面通知。
 
 **在别的电脑上看（比如助手装在 Mac，人在 Windows 上看）**：`config.json` 加 `"console_host": "0.0.0.0"`，重启助手后提醒群发来的「打开操作台」链接就是本机内网地址（如 `http://192.168.x.x:8765/?k=…`），同一内网的电脑都能打开，靠链接里的密钥挡住别人（别外传）；地址认错了可以用 `console_url_host` 指定 IP。这种用法下桌面通知在浏览器里弹不出来（浏览器只给本机或 https 页面弹），自动弹出也会弹在助手那台电脑上，建议加 `"popup": false`，靠提醒群机器人和标签页件数提醒。
 
@@ -2600,6 +2602,21 @@ def thread(no):
     return sorted(rows, key=lambda m: m["time"])
 
 
+HISTORY_N = 30            # 历史消息：每个群看最近 30 条（只为页面上翻看方便，全量去钉钉看）
+
+
+def history(cid):
+    """顶栏「值守中」点开：按群看最近 30 条消息（直接从钉钉拉，不存本地）。"""
+    if cid not in _groups():
+        return []
+    r = A["run"]([A["DWS"], "chat", "message", "list", "--group", cid, "--limit", str(HISTORY_N), "--format", "json"], timeout=60)
+    try:
+        msgs = json.loads(r.stdout).get("messages") or []
+    except (ValueError, AttributeError):
+        return [{"who": "（读取失败）", "time": "", "text": str(getattr(r, "stderr", "") or "")[:200]}]
+    return sorted(({"who": m.get("sender"), "time": m.get("createTime", ""), "text": str(m.get("content") or m.get("text") or "")} for m in msgs), key=lambda m: m["time"])
+
+
 def act(no, action, text=""):
     """页面按钮 → 提醒群同款指令，交给 agent.command（发出、留痕、提醒群「已处理」都走原逻辑）。"""
     if not re.fullmatch(r"#[A-Za-z0-9]{3,8}", no or ""):
@@ -2644,6 +2661,10 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, PAGE, "text/html; charset=utf-8")
         if u.path == "/api/state":
             return self._send(200, json.dumps(state(), ensure_ascii=False))
+        if u.path == "/api/groups":
+            return self._send(200, json.dumps([{"cid": c, "name": n} for c, n in _groups().items()], ensure_ascii=False))
+        if u.path == "/api/history":
+            return self._send(200, json.dumps(history((urllib.parse.parse_qs(u.query).get("cid") or [""])[0]), ensure_ascii=False))
         if u.path == "/api/thread":
             no = (urllib.parse.parse_qs(u.query).get("no") or [""])[0]
             return self._send(200, json.dumps(thread(no), ensure_ascii=False))
@@ -2788,7 +2809,7 @@ ${kind==='send'?`<div class="draft">${esc(c.draft)}</div>`:(c.reason?`<div class
 `<button class="btn p" onclick="openP('${c.no}')">回复</button><button class="btn" onclick="go('${c.no}','not_mine')">不归我</button>`}<button class="btn" onclick="openP('${c.no}',1)">问 AI</button></div></div>`}
 function empty(t){return `<div class="empty"><span class="big">☕</span>${t}</div>`}
 function render(){const s=S,ok=/^(\d+)\/\1$/.test(s.listeners)&&s.listeners!=='0/0';
-$('stat').innerHTML=`<span class="chip duty d-${s.duty}" title="最近收到消息 ${esc(s.last_event_t||'无')}；${esc(s.last_event||'')}"><span class="dot"></span><b>${esc(s.duty_text)}</b> · 监听 ${s.listeners}${s.last_event_t?' · 最近 '+s.last_event_t:''}</span><span class="chip">要你判断 <b>${s.judge.length}</b></span><span class="chip">草稿待发 <b>${s.send.length}</b></span><span class="chip">今天已处理 <b>${s.today_done}</b></span><span class="chip">${esc(s.me)} · ${s.time}</span>`;$('ver').textContent=s.version;
+$('stat').innerHTML=`<span class="chip duty d-${s.duty}" style="cursor:pointer" onclick="openH()" title="点开按群看最近消息；最近收到消息 ${esc(s.last_event_t||'无')}；${esc(s.last_event||'')}"><span class="dot"></span><b>${esc(s.duty_text)}</b> · 监听 ${s.listeners}${s.last_event_t?' · 最近 '+s.last_event_t:''}</span><span class="chip">要你判断 <b>${s.judge.length}</b></span><span class="chip">草稿待发 <b>${s.send.length}</b></span><span class="chip">今天已处理 <b>${s.today_done}</b></span><span class="chip">${esc(s.me)} · ${s.time}</span>`;$('ver').textContent=s.version;
 $('judge').innerHTML=s.judge.map(c=>card(c,'judge')).join('')||empty('没有要你判断的事');$('send').innerHTML=s.send.map(c=>card(c,'send')).join('')||empty('没有待发的草稿');
 $('done').innerHTML=s.done.map(d=>`<div class="card">${head({who:d.who,group:'',no:d.no,at:d.done})}<div class="txt">${esc(d.what)}</div><div class="why" style="--x:0">${esc(d.why)}</div></div>`).join('')||empty('今天还没有处理记录');
 $('n1').textContent=s.judge.length;$('n2').textContent=s.send.length;$('n3').textContent=s.done.length;
@@ -2808,7 +2829,14 @@ f.innerHTML=`<div class="lbl">${c.draft?'草稿（可以直接改）':'你的回
 <div class="btns">${c.can_send?`<button class="btn p" onclick="go('${c.no}','${c.draft?'edit_send':'reply_new'}',$('ta').value)">发送到原会话</button>`:'<span class="where">这个群设成了「只看」，请在钉钉里自己回</span>'}
 <button class="btn" onclick="go('${c.no}','stash',$('ta').value)">暂存不发</button>${c.draft?`<button class="btn d" onclick="go('${c.no}','drop')">不发</button>`:`<button class="btn" onclick="go('${c.no}','not_mine')">不归我</button>`}</div>
 <div class="askrow"><input class="q" id="q" placeholder="问 AI：依据是什么？帮我改得客气点…" onkeydown="if(event.key==='Enter')go('${c.no}','ask',this.value)"><button class="btn" onclick="go('${c.no}','ask',$('q').value)">问 AI</button></div>`;if(ask)setTimeout(()=>$('q').focus(),60)}
-function closeP(){sel=null;$('panel').classList.remove('on');$('mask').classList.remove('on');render()}
+// 顶栏「值守中」点开：按群看最近消息（复用右侧面板）
+let hsel=null;async function openH(cid){sel=null;const gs=await api('/api/groups');if(!gs.length)return toast('没有监听的群');hsel=cid||hsel||gs[0].cid;
+$('pav').outerHTML='<span class="av" id="pav" style="background:var(--green)">群</span>';$('ptitle').textContent='最近消息';$('psub').textContent='按群看，每个群最近 30 条';
+$('panel').classList.add('on');$('mask').classList.add('on');
+const tabs='<div class="btns" style="margin:0 0 14px;position:sticky;top:-16px;background:var(--soft);padding:8px 0;z-index:1">'+gs.map(g=>`<button class="btn sm${g.cid===hsel?' p':''}" onclick="openH('${g.cid}')">${esc(g.name)}</button>`).join('')+'</div>';
+$('pfoot').innerHTML='<div class="where">只读：这里只看消息，要回复请在卡片或钉钉里处理</div>';$('pbody').innerHTML=tabs+'<div class="empty">正在读…</div>';const t=await api('/api/history?cid='+encodeURIComponent(hsel));if(!$('panel').classList.contains('on'))return;
+$('pbody').innerHTML=tabs+t.map(m=>`<div class="bub">${av(m.who)}<div class="b"><div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx">${esc(m.text)}</div></div></div>`).join('')||'<div class="empty">没有消息</div>';$('pbody').scrollTop=1e9}
+function closeP(){sel=null;hsel=hsel;$('panel').classList.remove('on');$('mask').classList.remove('on');render()}
 async function go(no,action,text){if(['send','edit_send','reply_new'].includes(action)&&!confirm('确认发到原会话？'))return;
 const r=await api('/api/act',{no,action,text:text||''});toast(r.msg||'好了');if(action==='ask'&&$('q'))$('q').value='';document.activeElement&&document.activeElement.blur();tick()}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeP()});

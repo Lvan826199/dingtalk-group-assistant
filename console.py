@@ -176,6 +176,21 @@ def thread(no):
     return sorted(rows, key=lambda m: m["time"])
 
 
+HISTORY_N = 30            # 历史消息：每个群看最近 30 条（只为页面上翻看方便，全量去钉钉看）
+
+
+def history(cid):
+    """顶栏「值守中」点开：按群看最近 30 条消息（直接从钉钉拉，不存本地）。"""
+    if cid not in _groups():
+        return []
+    r = A["run"]([A["DWS"], "chat", "message", "list", "--group", cid, "--limit", str(HISTORY_N), "--format", "json"], timeout=60)
+    try:
+        msgs = json.loads(r.stdout).get("messages") or []
+    except (ValueError, AttributeError):
+        return [{"who": "（读取失败）", "time": "", "text": str(getattr(r, "stderr", "") or "")[:200]}]
+    return sorted(({"who": m.get("sender"), "time": m.get("createTime", ""), "text": str(m.get("content") or m.get("text") or "")} for m in msgs), key=lambda m: m["time"])
+
+
 def act(no, action, text=""):
     """页面按钮 → 提醒群同款指令，交给 agent.command（发出、留痕、提醒群「已处理」都走原逻辑）。"""
     if not re.fullmatch(r"#[A-Za-z0-9]{3,8}", no or ""):
@@ -220,6 +235,10 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, PAGE, "text/html; charset=utf-8")
         if u.path == "/api/state":
             return self._send(200, json.dumps(state(), ensure_ascii=False))
+        if u.path == "/api/groups":
+            return self._send(200, json.dumps([{"cid": c, "name": n} for c, n in _groups().items()], ensure_ascii=False))
+        if u.path == "/api/history":
+            return self._send(200, json.dumps(history((urllib.parse.parse_qs(u.query).get("cid") or [""])[0]), ensure_ascii=False))
         if u.path == "/api/thread":
             no = (urllib.parse.parse_qs(u.query).get("no") or [""])[0]
             return self._send(200, json.dumps(thread(no), ensure_ascii=False))
@@ -364,7 +383,7 @@ ${kind==='send'?`<div class="draft">${esc(c.draft)}</div>`:(c.reason?`<div class
 `<button class="btn p" onclick="openP('${c.no}')">回复</button><button class="btn" onclick="go('${c.no}','not_mine')">不归我</button>`}<button class="btn" onclick="openP('${c.no}',1)">问 AI</button></div></div>`}
 function empty(t){return `<div class="empty"><span class="big">☕</span>${t}</div>`}
 function render(){const s=S,ok=/^(\d+)\/\1$/.test(s.listeners)&&s.listeners!=='0/0';
-$('stat').innerHTML=`<span class="chip duty d-${s.duty}" title="最近收到消息 ${esc(s.last_event_t||'无')}；${esc(s.last_event||'')}"><span class="dot"></span><b>${esc(s.duty_text)}</b> · 监听 ${s.listeners}${s.last_event_t?' · 最近 '+s.last_event_t:''}</span><span class="chip">要你判断 <b>${s.judge.length}</b></span><span class="chip">草稿待发 <b>${s.send.length}</b></span><span class="chip">今天已处理 <b>${s.today_done}</b></span><span class="chip">${esc(s.me)} · ${s.time}</span>`;$('ver').textContent=s.version;
+$('stat').innerHTML=`<span class="chip duty d-${s.duty}" style="cursor:pointer" onclick="openH()" title="点开按群看最近消息；最近收到消息 ${esc(s.last_event_t||'无')}；${esc(s.last_event||'')}"><span class="dot"></span><b>${esc(s.duty_text)}</b> · 监听 ${s.listeners}${s.last_event_t?' · 最近 '+s.last_event_t:''}</span><span class="chip">要你判断 <b>${s.judge.length}</b></span><span class="chip">草稿待发 <b>${s.send.length}</b></span><span class="chip">今天已处理 <b>${s.today_done}</b></span><span class="chip">${esc(s.me)} · ${s.time}</span>`;$('ver').textContent=s.version;
 $('judge').innerHTML=s.judge.map(c=>card(c,'judge')).join('')||empty('没有要你判断的事');$('send').innerHTML=s.send.map(c=>card(c,'send')).join('')||empty('没有待发的草稿');
 $('done').innerHTML=s.done.map(d=>`<div class="card">${head({who:d.who,group:'',no:d.no,at:d.done})}<div class="txt">${esc(d.what)}</div><div class="why" style="--x:0">${esc(d.why)}</div></div>`).join('')||empty('今天还没有处理记录');
 $('n1').textContent=s.judge.length;$('n2').textContent=s.send.length;$('n3').textContent=s.done.length;
@@ -384,7 +403,14 @@ f.innerHTML=`<div class="lbl">${c.draft?'草稿（可以直接改）':'你的回
 <div class="btns">${c.can_send?`<button class="btn p" onclick="go('${c.no}','${c.draft?'edit_send':'reply_new'}',$('ta').value)">发送到原会话</button>`:'<span class="where">这个群设成了「只看」，请在钉钉里自己回</span>'}
 <button class="btn" onclick="go('${c.no}','stash',$('ta').value)">暂存不发</button>${c.draft?`<button class="btn d" onclick="go('${c.no}','drop')">不发</button>`:`<button class="btn" onclick="go('${c.no}','not_mine')">不归我</button>`}</div>
 <div class="askrow"><input class="q" id="q" placeholder="问 AI：依据是什么？帮我改得客气点…" onkeydown="if(event.key==='Enter')go('${c.no}','ask',this.value)"><button class="btn" onclick="go('${c.no}','ask',$('q').value)">问 AI</button></div>`;if(ask)setTimeout(()=>$('q').focus(),60)}
-function closeP(){sel=null;$('panel').classList.remove('on');$('mask').classList.remove('on');render()}
+// 顶栏「值守中」点开：按群看最近消息（复用右侧面板）
+let hsel=null;async function openH(cid){sel=null;const gs=await api('/api/groups');if(!gs.length)return toast('没有监听的群');hsel=cid||hsel||gs[0].cid;
+$('pav').outerHTML='<span class="av" id="pav" style="background:var(--green)">群</span>';$('ptitle').textContent='最近消息';$('psub').textContent='按群看，每个群最近 30 条';
+$('panel').classList.add('on');$('mask').classList.add('on');
+const tabs='<div class="btns" style="margin:0 0 14px;position:sticky;top:-16px;background:var(--soft);padding:8px 0;z-index:1">'+gs.map(g=>`<button class="btn sm${g.cid===hsel?' p':''}" onclick="openH('${g.cid}')">${esc(g.name)}</button>`).join('')+'</div>';
+$('pfoot').innerHTML='<div class="where">只读：这里只看消息，要回复请在卡片或钉钉里处理</div>';$('pbody').innerHTML=tabs+'<div class="empty">正在读…</div>';const t=await api('/api/history?cid='+encodeURIComponent(hsel));if(!$('panel').classList.contains('on'))return;
+$('pbody').innerHTML=tabs+t.map(m=>`<div class="bub">${av(m.who)}<div class="b"><div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx">${esc(m.text)}</div></div></div>`).join('')||'<div class="empty">没有消息</div>';$('pbody').scrollTop=1e9}
+function closeP(){sel=null;hsel=hsel;$('panel').classList.remove('on');$('mask').classList.remove('on');render()}
 async function go(no,action,text){if(['send','edit_send','reply_new'].includes(action)&&!confirm('确认发到原会话？'))return;
 const r=await api('/api/act',{no,action,text:text||''});toast(r.msg||'好了');if(action==='ask'&&$('q'))$('q').value='';document.activeElement&&document.activeElement.blur();tick()}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeP()});

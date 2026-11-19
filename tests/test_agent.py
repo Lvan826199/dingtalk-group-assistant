@@ -132,7 +132,7 @@ def test_default_report_window_uses_current_terminal_and_respects_disable(make_a
 
 
 def test_normal_start_opens_report_window_but_watch_does_not(make_agent, monkeypatch):
-    a, _, _ = make_agent()
+    a, _, _ = make_agent({"console": False})   # 不开操作台（会占端口、会多调 in_window）
     actions = []
     monkeypatch.setattr(sys, "argv", ["agent.py"])
     monkeypatch.setattr(a, "open_report_window", lambda: actions.append("report"))

@@ -1420,6 +1420,8 @@ def main():
     try:                                                                   # v3.0 本机操作台：页面上直接处理，和提醒群指令同步
         import console
         if console.start(globals()):
+            if CFG.get("open_on_start", True) and not console.lan():   # 上岗 / 部署 / 升级后自动在浏览器打开操作台，不用复制链接（11-19）
+                console.popup()
             notify("🖥 打开操作台", f"[点这里打开操作台]({console.url()})\n" + ("内网其他电脑也能打开（链接带密钥，别外传）" if console.lan() else "只能在本机打开；有新的要处理会弹桌面通知") + "，处理后提醒群和页面同步。")
     except Exception as ex:
         log("操作台没开起来", repr(ex)[:200])
