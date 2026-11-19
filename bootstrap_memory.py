@@ -20,7 +20,6 @@ def _extend_path():
 
 _extend_path()
 
-
 DWS = shutil.which("dws") or shutil.which("dws.cmd")
 # 判断用的 AI：与 agent.py 的 AI_PRESETS 一致（v2.7 不限 Codex）；config 的 ai / ai_cmd / ai_prompt / ai_model 同样生效
 AI_PRESETS = {"codex": (["codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only", "--output-last-message", "{out}"], "arg"),

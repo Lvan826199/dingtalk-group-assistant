@@ -1,4 +1,4 @@
-"""把文档做成内网网页：生成到 ~/qa-agent-site（不放桌面：launchd 后台读不了桌面目录），由 launchd 起 http.server 8090 常驻、开机登录自启。
+"""把文档做成内网网页（只提供最新版本下载，旧版升级说明不放，用户 11-18 定）：生成到 ~/qa-agent-site（不放桌面：launchd 后台读不了桌面目录），由 launchd 起 http.server 8090 常驻、开机登录自启。
 页面：首页列出文档（在线看 / 下载）+ 版本和更新记录；文档在浏览器里用本地 marked.js 渲染（不依赖外网）。
 用法：python3 -I site/build_site.py   （build_docs.py 生成文档后会自动调用）"""
 import html, json, os, re, shutil
@@ -9,6 +9,7 @@ DOCS = [("分享-可直接部署并运行AI监控钉钉群并自动处理.md", "
         ("roles/角色职责库.json", "角色职责库", "没有协作库时选角色用；可以自己增删改"),
         ("agent.py", "agent.py 源码", "助手主程序"),
         ("bootstrap_memory.py", "bootstrap_memory.py 源码", "首次建记忆")]
+shutil.rmtree(os.path.join(OUT, "files"), ignore_errors=True)   # 只留最新版本的文件，旧的下载链接一起清掉
 os.makedirs(os.path.join(OUT, "files"), exist_ok=True); os.makedirs(os.path.join(OUT, "assets"), exist_ok=True)
 shutil.copy(os.path.join(HERE, "assets", "marked.min.js"), os.path.join(OUT, "assets"))
 ver = re.search(r'VERSION = "([^"]+)"', open(os.path.join(REPO, "agent.py"), encoding="utf-8").read()).group(1)

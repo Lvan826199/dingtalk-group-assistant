@@ -24,60 +24,125 @@ def test_tidy_blank_line_between_lines(make_agent):
     assert a.tidy("第一行\n第二行\\n第三行\n\n  ") == "第一行\n\n第二行\n\n第三行"
 
 
+def drafts(a):
+    d = os.path.join(a.HOME, "drafts")
+    return sorted(os.listdir(d)) if os.path.isdir(d) else []
+
+
+def mixed_run(a, calls):
+    """AI 替身命令真跑，dws 等其他命令只记下来（不真发消息）。"""
+    real = subprocess.run
+
+    def run(args, **k):
+        if args and args[0] == sys.executable:
+            return real(args, capture_output=True, text=True, encoding="utf-8", **k)
+        calls.append(args); return R(0, '{"success": true}')
+    a.run = run
+
+
+def confirm(a, no, how="可以发送"):
+    a.relevant(msg(f"{no} {how}", sender="本人", cid="cidN", mid="c-" + no + how))
+
+
 # ---------------- 别人之间的对话不插话（v2.6）
-@pytest.mark.parametrize("content,replied", [("@另一位同事 看下这个", False), ("@本人 @另一位同事 看下", True), ("@所有人 通知", True), ("没有 at 的消息", True)])
-def test_others_conversation_skipped(make_agent, content, replied):
-    a, _, calls = make_agent({"groups": {GROUP: "测试群"}, "auto_reply_groups": [GROUP]})
+@pytest.mark.parametrize("content,drafted", [("@另一位同事 看下这个", False), ("@本人 @另一位同事 看下", True), ("@所有人 通知", True), ("没有 at 的消息", True)])
+def test_others_conversation_skipped(make_agent, content, drafted):
+    a, _, calls = make_agent({"groups": {GROUP: "测试群"}})
     a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "好"}
     a.handle([msg(content)])
-    assert bool(sent(calls)) is replied
+    assert bool(drafts(a)) is drafted and not sent(calls)
 
 
-# ---------------- 群聊默认只提醒，开自动回复要二次确认（v2.6）
-def test_new_deploy_groups_remind_only(make_agent):
-    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "auto_reply_groups": []})
+# ---------------- v2.8 决策权交给人：任何配置都不会自动发出
+@pytest.mark.parametrize("cfg", [{}, {"mode": "auto"}, {"auto_reply_groups": [GROUP]}, {"mode": "auto", "auto_reply_groups": [GROUP], "emoji": True}])
+def test_never_auto_send(make_agent, cfg):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, **cfg})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "好", "emoji": "赞", "sticker": ""}
+    a.handle([msg("@本人 在吗")])
+    a.decide = lambda b: {"action": "escalate", "mine": True, "reason": "派活"}
+    a.handle([msg("@本人 你来负责一下", mid="m2")])
+    a.decide = lambda b: {"action": "ignore", "mine": True, "emoji": "赞"}
+    a.handle([msg("@本人 谢谢", mid="m3")])
+    assert calls == []                                                    # 没有发消息、没有回执、没有点表情
+    assert any("草稿待你确认" in t for t, _ in notes) and any("需要你处理" in t for t, _ in notes)
+
+
+def test_status_events_are_logged_and_announced(make_agent):
+    a, notes, _ = make_agent({"status_notifications": True})
+    a.status_event("收到消息", "测试群 / 同事：请核实版本", announce=True)
+    a.status_event("处理完成", "已写入草稿", announce=True)
+    rows = [json.loads(x) for x in open(a.STATUS_LOG, encoding="utf-8").read().splitlines()]
+    assert [x["stage"] for x in rows[-2:]] == ["收到消息", "处理完成"]
+    assert any("收到消息" in t for t, _ in notes) and any("处理完成" in t for t, _ in notes)
+
+
+def test_auto_reply_commands_rejected_and_readonly_toggle(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    say = lambda t: a.relevant(msg(t, sender="本人", cid="cidN", mid=t))
+    say("测试群 自动回复"); say("确认开启 测试群")
+    assert all("不提供自动回复" in t for t, _ in notes[-2:])
+    say("测试群 只看")
+    assert not a.can_reply(GROUP)
     a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "好"}
     a.handle([msg("@本人 在吗")])
-    assert not sent(calls) and any("需要你处理" in t for t, _ in notes)
-
-
-def test_group_auto_reply_needs_second_confirm(make_agent):
-    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "auto_reply_groups": []})
-    say = lambda t: a.relevant(msg(t, sender="本人", cid="cidN", mid=t))
-    say("测试群 自动回复")
-    assert not a.can_reply(GROUP) and "二次确认" in notes[-1][0]
-    say("确认开启 测试群")
+    assert not drafts(a) and any("需要你处理" in t for t, _ in notes)   # 只看的群连草稿都不出
+    say("测试群 可发草稿")
     assert a.can_reply(GROUP)
-    say("测试群 只提醒")
-    assert not a.can_reply(GROUP)
-    cfg = json.load(open(a.CFG_PATH, encoding="utf-8"))
-    assert cfg["auto_reply_groups"] == []
 
 
-# ---------------- 升级不覆盖已有规则（v2.7）
-def test_upgrade_keeps_legacy_auto_reply_and_asks(make_agent):
-    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})          # 旧配置：没有 auto_reply_groups
-    assert a.can_reply(GROUP)
-    a.upgrade_ask()
-    assert "需要你定" in notes[-1][0]
-    a.relevant(msg("全部只提醒", sender="本人", cid="cidN", mid="x"))
-    assert not a.can_reply(GROUP)
-    n = len(notes); a.upgrade_ask()
-    assert len(notes) == n                                               # 选过以后不再问
+def test_v28_notice_once(make_agent):
+    a, notes, _ = make_agent({"groups": {GROUP: "测试群"}, "auto_reply_groups": [GROUP]})
+    a.upgrade_ask(); a.upgrade_ask()
+    assert len([t for t, _ in notes if "不再自动回复" in t]) == 1
 
 
-# ---------------- 表情（v2.6）
-def test_emoji_off_by_default_and_whitelist(make_agent):
-    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "auto_reply_groups": [GROUP]})
-    a.decide = lambda b: {"action": "ignore", "mine": True, "emoji": "赞"}
-    a.handle([msg("谢谢")])
-    assert not [c for c in calls if "add-emoji" in c]                    # 默认关
-    a.relevant(msg("表情 开", sender="本人", cid="cidN", mid="e"))
-    a.handle([msg("谢谢", mid="m2")])
-    assert [c for c in calls if "add-emoji" in c]
-    a.decide = lambda b: {"action": "ignore", "mine": True, "emoji": "随便写的"}
-    n = len(calls); a.handle([msg("谢谢", mid="m3")])
-    assert len(calls) == n                                               # 白名单外不点
+def test_confirm_sends_and_audits(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "测试服是 97f79eb", "reason": "发布通知 16:17"}
+    a.handle([msg("@本人 测试服哪个版本", mid="mABCDE")])
+    assert not sent(calls)
+    confirm(a, "#ABCDE")
+    assert len(sent(calls)) == 1 and not drafts(a)
+    rec = [json.loads(l) for l in open(a.AUDIT, encoding="utf-8")]
+    assert rec[-1]["发出内容"] == "测试服是 97f79eb" and rec[-1]["确认人"] == "本人" and rec[-1]["AI 依据"] == "发布通知 16:17"
+    a.cleanup_old(); a.purge_now()
+    assert os.path.exists(a.AUDIT)                                        # 留痕不随清理删除
+
+
+def test_ask_ai_then_confirm(make_agent):
+    stub = [sys.executable, "-c", "import sys,json; sys.stdin.read(); print(json.dumps({'answer':'依据是 16:17 的发布通知','new_draft':'您好，测试服现在是 97f79eb'}, ensure_ascii=False))"]
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "ai_cmd": stub, "ai_prompt": "stdin"})
+    mixed_run(a, calls)
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "97f79eb"}
+    a.handle([msg("@本人 测试服哪个版本", mid="mQWERT")])
+    a.relevant(msg("#QWERT 问：依据是什么？顺便改得客气点", sender="本人", cid="cidN", mid="q1"))
+    assert "AI 的回答" in notes[-1][0] and "16:17" in notes[-1][1]
+    assert not sent(calls)                                                # 问 AI 不会发任何东西
+    confirm(a, "#QWERT")
+    rec = json.loads(open(a.AUDIT, encoding="utf-8").read().splitlines()[-1])
+    assert rec["发出内容"] == "您好，测试服现在是 97f79eb" and rec["确认前问过 AI"][0]["问"].startswith("依据是什么")
+
+
+def test_ask_ai_on_escalated_item(make_agent):
+    stub = [sys.executable, "-c", "import sys,json; sys.stdin.read(); print(json.dumps({'answer':'这是派活，建议你自己回','new_draft':''}, ensure_ascii=False))"]
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "ai_cmd": stub, "ai_prompt": "stdin"})
+    mixed_run(a, calls)
+    a.decide = lambda b: {"action": "escalate", "mine": True, "reason": "派活"}
+    a.handle([msg("@本人 这个你来负责", mid="mZXCVB")])
+    a.relevant(msg("#ZXCVB 问：我该怎么回？", sender="本人", cid="cidN", mid="q2"))
+    assert "建议你自己回" in notes[-1][1] and not sent(calls)
+
+
+# ---------------- 表情（v2.6；v2.8 起只随确认发出）
+def test_sticker_only_sent_on_confirm(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "emoji": True})
+    os.makedirs(a.MEMDIR, exist_ok=True)
+    json.dump({"鼓掌": "https://example.invalid/x.gif"}, open(a.STICKERS, "w", encoding="utf-8"), ensure_ascii=False)
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "辛苦啦", "sticker": "鼓掌"}
+    a.handle([msg("@本人 今天上线了", mid="mSTICK")])
+    assert calls == [] and "配表情包：鼓掌" in [x for t, x in notes if "草稿" in t][-1]
+    confirm(a, "#STICK")
+    assert len(sent(calls)) == 1 and any("--title" in c and "鼓掌" in c for c in calls)
 
 
 def test_own_sticker_not_counted_as_my_reply(make_agent):
@@ -87,17 +152,15 @@ def test_own_sticker_not_counted_as_my_reply(make_agent):
     assert closed == []
 
 
-# ---------------- 钉钉发不出去（v2.7）
-def test_send_failure_notifies_once_and_keeps_draft_with_number(make_agent):
-    a, notes, _ = make_agent({"groups": {GROUP: "测试群"}, "auto_reply_groups": [GROUP]})
-    a.run = lambda args, **k: R(1, '{"error": {"message": "请求参数不能为空"}}')
+# ---------------- 钉钉发不出去（v2.7）：确认发送时失败，草稿保留、只提醒一次
+def test_send_failure_on_confirm_keeps_draft(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
     a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "改完了"}
-    for i in range(2):
-        with pytest.raises(a.SendFailed):
-            a.handle([msg("@本人 改完没", mid=f"m{i}")])
+    a.handle([msg("@本人 改完没", mid="mFAIL1")])
+    a.run = lambda args, **k: R(1, '{"error": {"message": "请求参数不能为空"}}')
+    confirm(a, "#FAIL1"); confirm(a, "#FAIL1", "发送")
     fails = [t for t, _ in notes if "没发出去" in t]
-    assert len(fails) == 1 and "#m0" in fails[0]                         # 只提醒一次，标题带草稿编号
-    assert len(os.listdir(os.path.join(a.HOME, "drafts"))) == 2
+    assert len(fails) == 1 and len(drafts(a)) == 1 and not os.path.exists(a.AUDIT)
 
 
 # ---------------- 找不到命令 / 卡住都不崩（v2.7）
@@ -216,3 +279,19 @@ def test_stop_children_kills_grandchild(make_agent):
         except Exception:
             return True
     assert not alive(gpid)
+
+
+# ---------------- 超时再提醒（v2.8）
+def test_remind_after_two_hours_and_configurable(make_agent):
+    a, notes, _ = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "escalate", "mine": True, "reason": "派活"}
+    a.handle([msg("@本人 这个你来负责", mid="mREMIN")])
+    t0 = time.time()
+    assert a.remind_due(t0 + 119 * 60) == []
+    assert [no for no, _ in a.remind_due(t0 + 121 * 60)] == ["#REMIN"] and "超过 2 小时" in notes[-1][0]
+    assert a.remind_due(t0 + 150 * 60) == []                             # 刚提醒过，不连着刷
+    a.relevant(msg("提醒间隔 30分钟", sender="本人", cid="cidN", mid="i1"))
+    assert json.load(open(a.CFG_PATH, encoding="utf-8"))["remind_after_minutes"] == 30
+    assert a.remind_due(t0 + 152 * 60)                                    # 距上次提醒超过 30 分钟
+    a.relevant(msg("提醒间隔 关", sender="本人", cid="cidN", mid="i2"))
+    assert a.remind_due(t0 + 999 * 60) == []

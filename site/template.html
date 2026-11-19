@@ -27,10 +27,10 @@
   <div>
     <div class="kicker">从这里，开始第一次部署 <span class="badge">{{VER}}</span></div>
     <h1>群里的消息，<br><em>只把该你处理的</em>交给你。</h1>
-    <p class="lead">监听钉钉工作群，按你的职责范围判断每条消息：能答的写好回复，拿不准的交给你，不归你的不插话。全程后台静默，提醒只走你自己的提醒群。</p>
+    <p class="lead">监听钉钉工作群，按你的职责范围判断每条消息：能答的写好草稿等你确认，拿不准的先问清楚再决定，不归你的不插话。决策权始终在你手里。</p>
     <div class="hero-actions"><a class="button primary" href="#start">开始上手</a><a class="button ghost" href="files/doc0.md" download="{{DOC0}}">下载部署文档 {{VER_SHORT}}</a></div>
     <div class="doc-tools"><button class="link-button" data-copy-doc>⧉ 复制部署文档</button><span>·</span><a href="view.html?f=doc0.md&n={{DOC0}}&raw=1">以 Markdown 格式查看</a></div>
-    <p class="hero-note">产品 / 研发 / 测试 / 运营 / 项目负责人都能用 · Windows / macOS / Linux + 任一 AI 编程助手 + 钉钉 CLI · 装好 AI 工具和钉钉 CLI 后，部署约 3 分钟 · 群聊默认只提醒，开自动回复要你二次确认</p>
+    <p class="hero-note">产品 / 研发 / 测试 / 运营 / 项目负责人都能用 · Windows / macOS / Linux + 任一 AI 编程助手 + 钉钉 CLI · 装好 AI 工具和钉钉 CLI 后，部署约 3 分钟 · 不自动回复，所有消息你确认后才发</p>
   </div>
   <div class="hero-card"><div class="chat">
     <div class="msg"><span class="who">同事 · 测试群</span>@你 最新包里 special 改名改完了吗？</div>
@@ -47,11 +47,11 @@
     <div class="wf"><span class="n">1</span><b>监听</b><span>钉钉长连接收消息，只在上班时段（默认 09:00–21:00）。</span></div>
     <div class="wf"><span class="n">2</span><b>过滤</b><span>@ 你、提到关键词或关注的同事才处理；@ 别人的直接跳过。</span></div>
     <div class="wf"><span class="n">3</span><b>判断</b><span>按职责范围、工作手册和硬规则：是不是归你、能不能答、有没有依据。</span></div>
-    <div class="wf"><span class="n">4</span><b>执行</b><span>回复、写草稿或提醒你；新学到的「谁负责什么」记进记忆。</span></div>
+    <div class="wf"><span class="n">4</span><b>执行</b><span>写草稿或提醒你，你确认后才发出；新学到的「谁负责什么」记进记忆。</span></div>
   </div>
   <div class="outcomes">
-    <div class="oc g"><b>💬 自动回复</b><span>确定归你、有明确依据、该群已二次确认开启自动回复。</span></div>
-    <div class="oc b"><b>📝 草稿等你确认</b><span>草稿模式，或 10 分钟内自动回复太多时，发到提醒群等你一句「可以发送」。</span></div>
+    <div class="oc g"><b>💡 先问清楚</b><span>拿不准就在提醒群问「#编号 问：依据是什么？」，AI 回答或改草稿，不往群里发任何东西。</span></div>
+    <div class="oc b"><b>📝 草稿等你确认</b><span>能答的写成草稿发到提醒群，你一句「可以发送」才发出；每条发出的都留痕。</span></div>
     <div class="oc a"><b>🔔 交给你</b><span>派活、排期、承诺、拿不准的一律交给你，绝不替你答应。</span></div>
   </div>
 </section>
@@ -76,7 +76,7 @@
         <div class="cmd"><code>部署</code><button class="copy-button" data-copy="部署">复制</button></div></div>
       <div class="step-card" id="s3"><div class="step-heading"><span class="no">03</span><h3>确认角色、职责范围和回复规则</h3></div>
         <p>有协作库就按协作库认出你的角色和职责；没有就从<b>角色职责库</b>选（产品、Android、iOS、H5、网页版、服务端、剧中台、推荐、测试、运营、后台 UI、项目负责人，可多选）。每个角色的职责会念给你，你修改、补充，最后二次确认才生效。</p>
-        <div class="callout">群聊默认只提醒、不回复。哪个群要自动回复，以后在提醒群里二次确认再开。</div></div>
+        <div class="callout">助手不会在群里自动回复任何消息：所有回复都由你确认后才发，超过 2 小时没处理会再提醒你。</div></div>
       <div class="step-card" id="s4"><div class="step-heading"><span class="no">04</span><h3>建你自己的提醒群机器人</h3></div>
         <p>建一个只有你自己的钉钉群，加自定义机器人（加签）。所有提醒、草稿、每日汇报都发到这里，有推送、有历史。</p></div>
       <div class="step-card" id="s5"><div class="step-heading"><span class="no">05</span><h3>自检，看到版本号就好了</h3></div>
@@ -96,8 +96,10 @@
     <div class="use"><h3>草稿要不要发</h3><p>草稿发到提醒群，你一句话决定。</p><div class="tags"><code>#编号 可以发送</code><code>#编号 不发</code><code>#编号 改成：新内容</code><code>全部发送</code></div></div>
     <div class="use"><h3>看还有哪些没回</h3><p>列出全部没处理完的事，有草稿的带上草稿。</p><div class="tags"><code>待回复</code><code>#编号 暂存：内容</code><code>清空</code></div></div>
     <div class="use"><h3>「是不是归你？」</h3><p>拿不准归谁时群里一个字都不回，只问你。</p><div class="tags"><code>#编号 不归我</code></div></div>
-    <div class="use"><h3>哪些群能自动回复</h3><p>默认都只提醒；开启要二次确认，关掉立即生效。</p><div class="tags"><code>群列表</code><code>群名 自动回复</code><code>确认开启 群名</code><code>群名 只提醒</code></div></div>
-    <div class="use"><h3>表情和表情包</h3><p>默认关。开了以后只在轻松场合、确定找你时用；内置约 840 张，不用自己配。</p><div class="tags"><code>表情 开</code><code>表情 关</code><code>表情包</code><code>删表情包 名字</code></div></div>
+    <div class="use"><h3>先问清楚再决定</h3><p>AI 只在提醒群回答或改草稿，决定还是你来做。</p><div class="tags"><code>#编号 问：依据是什么？</code><code>#编号 问：帮我改得客气点</code></div></div>
+    <div class="use"><h3>超时再提醒</h3><p>没处理的事默认 2 小时再提醒一次，时间你自己定。</p><div class="tags"><code>提醒间隔 3小时</code><code>提醒间隔 30分钟</code><code>提醒间隔 关</code></div></div>
+    <div class="use"><h3>群和留痕</h3><p>哪些群可以往里发；每条发出的消息谁确认的都查得到。</p><div class="tags"><code>群列表</code><code>群名 只看</code><code>python C:\qa-agent\agent.py audit</code></div></div>
+    <div class="use"><h3>表情和表情包</h3><p>默认关。开了以后只在草稿里建议一张，你确认发送时才一起发；内置约 840 张。</p><div class="tags"><code>表情 开</code><code>表情 关</code><code>表情包</code><code>删表情包 名字</code></div></div>
     <div class="use"><h3>角色职责库</h3><p>对你的 AI 助手说就行；改到你在用的角色，会先念给你二次确认。</p><div class="tags"><code>角色职责库加一个角色</code><code>删掉某个角色</code><code>我换角色了</code></div></div>
     <div class="use"><h3>助手状态</h3><p>在电脑上运行，看环境、今天处理了多少。</p><div class="tags"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><code data-win="python C:\qa-agent\agent.py status" data-unix="python3 ~/qa-agent/agent.py status">python C:\qa-agent\agent.py status</code></div></div>
   </div>
@@ -112,7 +114,7 @@
     <div class="cmd"><code data-win="python C:\qa-agent\bootstrap_memory.py" data-unix="python3 ~/qa-agent/bootstrap_memory.py">python C:\qa-agent\bootstrap_memory.py</code><button class="copy-button" data-copy="python C:\qa-agent\bootstrap_memory.py">复制</button></div>
     <div class="step-heading" style="margin-top:22px"><span class="no">③</span><h3>自检，看到「版本 {{VER_SHORT}}」</h3></div>
     <div class="cmd"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py check">复制</button></div>
-    <div class="callout">原来开着自动回复的群照旧。助手启动后会在提醒群问你「保持现状 / 全部只提醒」，没回之前不改。</div>
+    <div class="callout">v2.8 起不再自动回复：以前开过的会自动停用，所有消息改成草稿、你确认后才发，提醒群会说一声。</div>
   </div>
 </section>
 
@@ -131,7 +133,7 @@
   <div class="section-heading"><div class="section-kicker">常见问题</div><h2>常见问题</h2></div>
   <div style="margin-top:16px">
     <details><summary>它会不会替我答应别人的需求？</summary><p>不会。派活、排期、要你负责、问能不能做 / 什么时候完成，一律交给你；这是代码和提示词里的硬规则。</p></details>
-    <details><summary>群里会不会突然冒出它的回复？</summary><p>群聊默认只提醒。只有你在提醒群发「群名 自动回复」并「确认开启 群名」之后，那个群才会自动回复，而且只回确定归你、有明确依据的事。</p></details>
+    <details><summary>群里会不会突然冒出它的回复？</summary><p>不会。助手没有自动回复：所有回复都先写成草稿，你确认后才以你的名义发出，每条都留痕（谁、何时确认、问过 AI 什么）。</p></details>
     <details><summary>会读我的私聊吗？</summary><p>默认不读私聊，只监听部署时你选的群。</p></details>
     <details><summary>凭据存在哪？</summary><p>都在你自己的电脑上（Windows <code>%USERPROFILE%\.qa-agent\config.json</code>，macOS / Linux <code>~/.qa-agent/config.json</code>），不上传、不进仓库；钉钉登录由你自己扫码。</p></details>
     <details><summary>用哪个 AI？</summary><p>你平时用哪个就用哪个，账号、API Key 你自己配，我们不管。部署时 AI 助手会把自己记成「判断用的 AI」；想换就对 AI 助手说「判断改用 Claude Code」。</p></details>
@@ -154,7 +156,7 @@
   function curOs(){try{var v=localStorage.getItem('qa-os');if(v)return v}catch(e){}var u=navigator.userAgent;return /Mac/.test(u)?'mac':/Linux|X11/.test(u)?'linux':'win'}
   function applyOs(o){osb.forEach(function(b){b.setAttribute('aria-pressed',b.dataset.os===o)});document.querySelectorAll('code[data-win]').forEach(function(c){var t=o==='win'?c.dataset.win:c.dataset.unix;c.textContent=t;var btn=c.parentNode.querySelector('.copy-button');if(btn)btn.dataset.copy=t});try{localStorage.setItem('qa-os',o)}catch(e){}}
   osb.forEach(function(b){b.onclick=function(){applyOs(b.dataset.os)}});applyOs(curOs());
-  // 左侧悬浮大纲：点击平滑滚到对应一节；滚动时高亮当前所在的一节
+  // 左侧悬浮大纲：点击平滑滚到对应一节；滚动时高亮当前所在的一节（用户 11-18 要求）
   var tocLinks=[].slice.call(document.querySelectorAll('.side-toc a')),tocSecs=tocLinks.map(function(a){return document.getElementById(a.getAttribute('href').slice(1))}),tocLock=0;
   function tocOn(i){tocLinks.forEach(function(a,j){a.classList.toggle('on',j===i)})}
   tocLinks.forEach(function(a,i){a.onclick=function(e){e.preventDefault();tocLock=Date.now()+1200;tocOn(i);tocSecs[i].scrollIntoView({behavior:'smooth',block:'start'});try{history.replaceState(null,'',a.getAttribute('href'))}catch(x){}}});

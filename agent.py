@@ -2,6 +2,10 @@
 v2（2026-11-13）：全程不弹窗口（pythonw + 子进程隐藏 + 系统通知）；两路并行处理、同会话 20 秒内连发合并一次判断；
 积压时自动开子 Agent（临时多开 Codex 处理通道，最多 max_workers 个，空了自动退出）；
 每天上班把前一天总结发到本人自己的钉钉私聊；钉钉监听连续断开会提醒本人；
+v2.8（内网版，项目负责人 11-18：决策权交给人）：取消自动回复——任何消息都先写成草稿，本人确认后才发；连「收到，我确认一下」回执和自动点表情也取消。
+  超过 2 小时（remind_after_minutes，可改，提醒群「提醒间隔 3小时 / 关」）还没处理的事，合并再提醒一次。
+  提醒群「#编号 问：…」可以先问清楚 AI（依据、背景、改写），再决定发不发；每条发出的消息都留痕（谁、何时确认、问过什么、依据），存 audit/发出留痕.jsonl，不随保留期清理。
+v2.9（内网版，11-19）：状态可见——启动、收到相关消息、开始处理、处理完成、监听异常、独立心跳和停止都写入 logs/status.jsonl；状态通知默认发提醒群，心跳默认每 15 分钟一次。
 v2.7（梦无矶 11-18）：不限 QA——部署时按协作库 registry\roles.yaml 认全部角色（产品、Android、iOS、H5、网页版、服务端、剧中台、推荐、测试、运营、后台 UI、项目负责人），工作手册每个角色一段规则；名字改为「群消息助手」。
 v2.6（梦无矶 11-18）：回复更短、分行（每条 1～3 行，几件事一行一件；发出前把换行统一变成空行，钉钉单个换行会连成一坨）；
   别人之间的对话不插话：消息 @ 的是别人、没 @ 本人，代码层直接不回，也不打扰本人。
@@ -24,11 +28,12 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
       python agent.py status     今天处理了多少、还有几件没处理
       python agent.py clear      清空待回复（没处理完的事和草稿全部清掉，不发出）
       python agent.py stickers   下载 / 更新内置表情包索引（v2.6）
+      python agent.py audit [N]  看最近 N 条发出留痕（谁、何时确认、问过 AI 什么）（v2.8）
       python agent.py purge      立刻清掉原始记录（消息原文、群历史导出、旧日志），记忆和草稿不动（v2.7）
 配置 ~/.qa-agent/config.json（Windows 是 %USERPROFILE%\\.qa-agent\\config.json）；记忆在安装目录的 memory/（Windows C:\\qa-agent\\memory\\，macOS / Linux ~/qa-agent/memory/）。"""
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 
-VERSION = "v2.7 2026-11-18"
+VERSION = "v2.9 2026-11-19"
 HOME = os.path.dirname(os.path.abspath(__file__))
 CFG_PATH = os.path.join(os.path.expanduser("~"), ".qa-agent", "config.json")
 DEFAULTS = {"my_name": "", "person_id": "", "roles": [], "project": "", "groups": {}, "readonly_groups": {}, "keywords": [], "people": [],
@@ -36,7 +41,8 @@ DEFAULTS = {"my_name": "", "person_id": "", "roles": [], "project": "", "groups"
             "burst_threshold": 3, "max_workers": 4, "ack_on_escalate": True, "notify_group": "", "scope_confirmed": False,
             "codex_model": "", "webhook": "", "secret": "", "window": ["09:00", "21:00"],
             "emoji": False, "emoji_names": ["赞", "OK", "收到", "谢谢", "辛苦了", "加油", "鼓掌"],
-            "keep_days": 30, "update_url": "https://raw.githubusercontent.com/Lvan826199/dingtalk-group-assistant/main/agent.py", "update_page": "https://github.com/Lvan826199/dingtalk-group-assistant"}
+            "keep_days": 30, "remind_after_minutes": 120, "status_notifications": True, "status_heartbeat_minutes": 15,
+            "update_url": "https://raw.githubusercontent.com/Lvan826199/dingtalk-group-assistant/main/agent.py", "update_page": "https://github.com/Lvan826199/dingtalk-group-assistant"}
 CFG = {**DEFAULTS, **json.load(open(CFG_PATH, encoding="utf-8"))}
 COORD = os.path.join(HOME, "project-coordination")
 MEMDIR = os.path.join(HOME, "memory")
@@ -48,6 +54,22 @@ NOWIN = {}
 if os.name == "nt":
     si = subprocess.STARTUPINFO(); si.dwFlags |= subprocess.STARTF_USESHOWWINDOW; si.wShowWindow = 0
     NOWIN = {"creationflags": 0x08000000, "startupinfo": si}          # CREATE_NO_WINDOW
+
+# ---- 开机自启（LaunchAgent / systemd / 计划任务）带的 PATH 很短，找不到装在用户目录下的 AI 命令和钉钉 CLI
+# （macOS 上 claude / codex 默认在 ~/.local/bin，launchd 的 PATH 里没有，11-18 实测）。把常见安装目录补到 PATH 末尾，已有的不重复加。
+def _extend_path():
+    h = os.path.expanduser("~")
+    if os.name == "nt":
+        extra = [os.path.join(os.environ.get("APPDATA", ""), "npm"), os.path.join(h, ".local", "bin"), os.path.join(h, "AppData", "Local", "Programs", "Python", "Launcher")]
+    else:
+        extra = [os.path.join(h, ".local", "bin"), os.path.join(h, ".npm-global", "bin"), "/opt/homebrew/bin", "/usr/local/bin",
+                 os.path.join(h, ".bun", "bin"), os.path.join(h, ".cargo", "bin"), os.path.join(h, "bin"), "/snap/bin"]
+        extra += sorted(glob.glob(os.path.join(h, ".nvm", "versions", "node", "*", "bin")), reverse=True)[:1]   # nvm 装的 node / npm 全局命令
+    cur = os.environ.get("PATH", "").split(os.pathsep)
+    os.environ["PATH"] = os.pathsep.join(cur + [d for d in extra if d and os.path.isdir(d) and d not in cur])
+
+
+_extend_path()
 
 
 # ---- 开机自启（LaunchAgent / systemd / 计划任务）带的 PATH 很短，找不到装在用户目录下的 AI 命令和钉钉 CLI
@@ -188,6 +210,9 @@ LOG = open(os.path.join(HOME, "logs", dt.date.today().isoformat() + ".log"), "a"
 STATE = {"calls": 0, "todo_t": 0, "todo": ""}
 FAILS = {}
 OUT = {}            # 助手自己发出的文字 → 发出时间；监听再收到时不当作本人亲自回复
+STATUS_LOG = os.path.join(HOME, "logs", "status.jsonl")
+LISTENERS = {}      # tag -> {started, alive}
+LAST_EVENT = {"t": 0, "summary": ""}
 
 
 def log(*a):
@@ -196,6 +221,34 @@ def log(*a):
         LOG.write(line + "\n"); LOG.flush()
     if sys.stdout and sys.stdout.isatty():
         print(line, flush=True)
+
+
+def status_event(stage, detail="", announce=False):
+    """把值守状态落盘；announce=True 时同步发提醒群，避免助手静默卡住。"""
+    rec = {"time": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "stage": stage,
+           "detail": str(detail)[:800], "pid": os.getpid(), "version": VERSION}
+    with LOCK:
+        with open(STATUS_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    log("状态", stage, detail)
+    if announce and CFG.get("status_notifications", True):
+        notify(f"📡 {stage}", str(detail)[:800])
+
+
+def status_snapshot():
+    alive = [name for name, x in LISTENERS.items() if x.get("alive")]
+    opened = len(_open_load())
+    last = LAST_EVENT.get("summary") or "无"
+    return f"监听 {len(alive)}/{len(LISTENERS)}（{'、'.join(alive) or '无'}）；处理通道 {ACTIVE['n']}；队列 {Q.qsize() + READY.qsize()}；待处理 {opened}；最近事件 {last}"
+
+
+def heartbeat_loop():
+    """独立线程定期报告；Codex / 监听线程卡住时，外部 watchdog 仍可依靠 status.jsonl 判断最后心跳。"""
+    while in_window():
+        mins = max(1, int(CFG.get("status_heartbeat_minutes") or 15))
+        time.sleep(mins * 60)
+        if in_window():
+            status_event("心跳", status_snapshot(), announce=bool(CFG.get("status_notifications", True)))
 
 
 def in_window():
@@ -251,7 +304,7 @@ def open_add(e, kind, why):
     """交给本人 / 草稿待确认 → 记一个编号（本地 open.json），机器人消息里带上，处理完再发一条「已处理」。"""
     no = "#" + re.sub(r"[^A-Za-z0-9]", "", e.get("message_id", ""))[-5:]
     d = _open_load(); d[no] = {"cid": e.get("conversation_id"), "kind": kind, "who": e.get("sender"),
-                               "what": str(e.get("content") or "")[:60], "why": why[:60], "at": f"{dt.datetime.now():%m-%d %H:%M}", "event": e}
+                               "what": str(e.get("content") or "")[:60], "why": why[:60], "at": f"{dt.datetime.now():%m-%d %H:%M}", "ts": time.time(), "event": e}
     _open_save(d)
     return no
 
@@ -314,57 +367,50 @@ PENDING_ON = {}   # 等二次确认开自动回复的群：cid → 时间
 
 
 def can_reply(cid):
-    """v2.6（梦无矶 11-18 定）：新部署群聊默认只提醒不回复，本人在提醒群二次确认过的群（auto_reply_groups）才自动回复。
-    升级不能覆盖本人已有的规则：老配置没有 auto_reply_groups 时照旧（groups 里的都能回），并在提醒群问本人要不要改（upgrade_ask）。"""
-    if "auto_reply_groups" not in CFG:
-        return cid in CFG["groups"]
-    return cid in CFG["groups"] and cid in (CFG.get("auto_reply_groups") or [])
+    """这个群能不能往里发消息（只发本人确认过的草稿）。v2.8 起没有自动回复：groups 里的群可发草稿，readonly_groups 只看。"""
+    return cid in CFG["groups"]
 
 
 def upgrade_ask():
-    """从旧版升上来：新默认（群聊只提醒）和本人现在的设置（这些群自动回复）冲突，问本人定，没回之前保持原样。"""
-    if "auto_reply_groups" in CFG or not CFG["groups"]:
+    """v2.8 升级提示：以前开过自动回复的，告诉本人现在一律改成草稿确认（公司要求：决策权交给人）。只提示一次。"""
+    mark = os.path.join(HOME, "logs", "v2.8-notice")
+    if os.path.exists(mark) or not CFG["groups"]:
         return
-    notify("⚙️ v2.6 有一处默认和你现在的设置不一样，需要你定",
-           "新版默认：群聊只提醒、不在群里回复，开自动回复要二次确认。\n你现在这些群是自动回复：" + "、".join(CFG["groups"].values()) +
-           "\n回「保持现状」：这些群继续自动回复；回「全部只提醒」：都改成只提醒。没回之前照旧，不改你的设置。")
+    open(mark, "w").close()
+    notify("ℹ️ v2.8：不再自动回复", "从这一版起，助手不在群里自动回复任何消息：能答的写成草稿发到这里，你确认后才发；回执「收到，我确认一下」和自动点表情也取消了。\n"
+           "拿不准可以先问：「#编号 问：依据是什么？」。每条发出的消息都会留痕。")
 
 
 def group_command(text):
-    """按群开关自动回复：「群列表」看状态；「<群名> 只提醒」立即关；「<群名> 自动回复」要再回「确认开启 <群名>」（10 分钟内）才开。写回 config.json。"""
+    """「群列表」看监听的群；「<群名> 只看」以后这个群的草稿也不发（只提醒）；「<群名> 可发草稿」恢复。v2.8 起没有自动回复。"""
     allg = {**CFG["groups"], **CFG["readonly_groups"]}
     if text in ("清理记录", "清理原始记录"):
         n = purge_now()
-        notify("🧹 原始记录已清理", f"清掉 {n} 条 / 个（收到的消息原文、群历史导出、旧日志）。提炼好的记忆和草稿没动。平时会自动只保留最近 {CFG.get('keep_days') or '不限'} 天。"); return True
-    if text in ("保持现状", "全部只提醒") and "auto_reply_groups" not in CFG:
-        save_cfg("auto_reply_groups", list(CFG["groups"]) if text == "保持现状" else [])
-        notify("👥 已按你说的设置", "保持原来的自动回复群" if text == "保持现状" else "所有群改成只提醒；要开哪个群发「群名 自动回复」"); return True
+        notify("🧹 原始记录已清理", f"清掉 {n} 条 / 个（收到的消息原文、群历史导出、旧日志）。提炼好的记忆、草稿和发出留痕没动。平时会自动只保留最近 {CFG.get('keep_days') or '不限'} 天。"); return True
+    m = re.fullmatch(r"提醒间隔\s*(关|关闭|0|\d+(?:\.\d+)?)\s*(小时|h|分钟|分|min)?", text, re.I)
+    if m:
+        v = m.group(1)
+        mins = 0 if v in ("关", "关闭", "0") else int(float(v) * (60 if (m.group(2) or "小时").lower() in ("小时", "h") else 1))
+        save_cfg("remind_after_minutes", mins)
+        notify("⏰ 已设置", "超时不再重复提醒" if not mins else f"没处理的事超过 {mins // 60 if mins % 60 == 0 else mins} {'小时' if mins % 60 == 0 else '分钟'}会再提醒一次"); return True
     if text in ("群列表", "监听群", "看群"):
-        rows = [f"{n}：{'自动回复' if can_reply(c) else '只提醒'}" for c, n in allg.items()]
-        notify("👥 监听的群", "\n".join(rows) + "\n改：发「群名 只提醒」或「群名 自动回复」（开自动回复要二次确认）"); return True
-    m = re.fullmatch(r"(确认开启)\s*(.+)", text) or re.fullmatch(r"(.+?)\s*(只提醒|只看|不回复|自动回复|可以回复)", text)
+        rows = [f"{n}：{'可发草稿（你确认后发）' if can_reply(c) else '只看'}" for c, n in allg.items()]
+        notify("👥 监听的群", "\n".join(rows) + "\n改：发「群名 只看」或「群名 可发草稿」。所有消息都要你确认才会发出。"); return True
+    if re.search(r"自动回复|确认开启", text):
+        notify("ℹ️ 不提供自动回复", "按公司要求，决策权交给人：助手只写草稿，你确认后才发。拿不准可以先问「#编号 问：……」。"); return True
+    m = re.fullmatch(r"(.+?)\s*(只看|只提醒|不回复|可发草稿|可以发)", text)
     if not m:
         return False
-    confirm = m.group(1) == "确认开启"
-    name = (m.group(2) if confirm else m.group(1)).strip()
+    name, ro = m.group(1).strip(), m.group(2) in ("只看", "只提醒", "不回复")
     hit = [c for c, n in allg.items() if name == n] or [c for c, n in allg.items() if name in n]
     if len(hit) != 1:
         notify("❓ 没认出是哪个群", f"「{name}」匹配到 {len(hit)} 个。发「群列表」看准确群名。"); return True
     cid = hit[0]; gname = allg[cid]
-    on = list(CFG["auto_reply_groups"]) if "auto_reply_groups" in CFG else list(CFG["groups"])   # 旧配置：当前能回的就是 groups
-    if not confirm and m.group(2) in ("只提醒", "只看", "不回复"):
-        save_cfg("auto_reply_groups", [c for c in on if c != cid]); PENDING_ON.pop(cid, None)
-        notify("👥 已切换", f"{gname}：只提醒，不在群里回复任何话"); return True
-    if not confirm:
-        PENDING_ON[cid] = time.time()
-        notify("⚠️ 请二次确认", f"要在「{gname}」开启自动回复吗？开了以后，确定归你、有明确依据的消息助手会直接在群里回。\n确认请在 10 分钟内回「确认开启 {gname}」。"); return True
-    if time.time() - PENDING_ON.pop(cid, 0) > 600:
-        notify("❓ 没有待确认的开启", f"先发「{gname} 自动回复」，再在 10 分钟内回「确认开启 {gname}」。"); return True
-    if cid in CFG["readonly_groups"]:
-        g, ro = dict(CFG["groups"]), dict(CFG["readonly_groups"]); g[cid] = ro.pop(cid)
-        save_cfg("groups", g); save_cfg("readonly_groups", ro)
-    save_cfg("auto_reply_groups", on + [cid])
-    notify("👥 已开启自动回复", f"{gname}：仍按职责范围和硬规则，拿不准的照样交给你。随时发「{gname} 只提醒」关掉。"); return True
+    g, rog = dict(CFG["groups"]), dict(CFG["readonly_groups"])
+    g.pop(cid, None); rog.pop(cid, None)
+    (rog if ro else g)[cid] = gname
+    save_cfg("groups", g); save_cfg("readonly_groups", rog)
+    notify("👥 已切换", f"{gname}：" + ("只看，草稿也不往这个群发" if ro else "可发草稿，你确认后发")); return True
 
 
 def sticker_command(text):
@@ -373,7 +419,7 @@ def sticker_command(text):
     if m:
         on = m.group(1).lower() in ("开", "打开", "on")
         save_cfg("emoji", on)
-        notify("😀 表情已" + ("打开" if on else "关闭"), f"表情回应（{'、'.join(CFG['emoji_names'])}）和表情包{'会在轻松的场合用' if on else '都不再发'}。表情包 {len(stickers())} 张" + ("" if stickers() else "，还没下载：在电脑上运行 python agent.py stickers") + "。")
+        notify("😀 表情包已" + ("打开" if on else "关闭"), f"表情包{'会在轻松的场合附在草稿里建议，你确认发送时才一起发' if on else '不再建议'}。表情包 {len(stickers())} 张" + ("" if stickers() else "，还没下载：在电脑上运行 python agent.py stickers") + "。")
         return True
     if text in ("表情包", "表情包库", "看表情包"):
         lib = stickers()
@@ -408,12 +454,8 @@ def send_sticker(e, name):
 
 
 def ack(e):
-    """交给本人时先让对方知道已经看到：只在可回复的群、且对方明确 @ 了本人时回（v2.5.1：没 @ 本人的消息也回执会刷屏，11-17 一位同事那边连回 项目助手 给别人的消息）。"""
-    if CFG.get("ack_on_escalate") and can_reply(e.get("conversation_id")) and "@" + CFG["my_name"] in str(e.get("content") or ""):
-        try:
-            reply(e, "收到，我确认一下再回复。", keep_draft=False)
-        except Exception as ex:
-            log("确认回执失败", repr(ex))
+    """v2.8 起取消：「收到，我确认一下再回复」也是没经本人确认就发出的话，不再发。保留函数名兼容旧调用。"""
+    return
 
 
 def related_memory(text):
@@ -482,6 +524,55 @@ def clear_all():
     return n, len(fs)
 
 
+AUDIT = os.path.join(HOME, "audit", "发出留痕.jsonl")    # v2.8：每条发出的消息谁确认的、问过什么、依据；不随保留期清理
+
+
+def audit(no, ev, text, confirm, sticker="", reason=""):
+    os.makedirs(os.path.dirname(AUDIT), exist_ok=True)
+    x = _open_load().get(no, {})
+    rec = {"发出时间": f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}", "编号": no, "群": {**CFG["groups"], **CFG["readonly_groups"]}.get(ev.get("conversation_id"), ev.get("conversation_id")),
+           "原消息": {"谁": ev.get("sender"), "内容": str(ev.get("content") or "")[:500], "消息ID": ev.get("message_id")},
+           "发出内容": text, "表情包": sticker, "确认人": CFG["my_name"], "确认方式": confirm[:200],
+           "AI 依据": reason or x.get("reason", ""), "确认前问过 AI": x.get("qa", [])}
+    with LOCK, open(AUDIT, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def ask_ai(no, question):
+    """「#编号 问：……」：带着原消息、草稿、依据、记忆去问 AI；AI 可以给答复，也可以按要求改草稿。只回提醒群，不往原会话发任何东西。"""
+    x = _open_load().get(no)
+    f, d = draft_by_no(no)
+    if not x and not d:
+        notify(f"❓ 没找到 {no}", "可能已经处理完了。发「待回复」看还有哪些。"); return
+    ev = (d or {}).get("event") or x.get("event") or {}
+    draft = (d or {}).get("draft", "")
+    qa = (x or {}).get("qa", [])
+    prompt = ("你是我的群消息助手。我在决定怎么处理下面这条群消息前，想先问清楚。只输出一行 JSON："
+              '{"answer": "直接回答我的问题，1～5 行，有依据就写出处，没依据就说不知道", "new_draft": "只有我要求改写 / 起草回复时才填，否则留空"}\n'
+              "不要替我做决定，不要承诺任何事；new_draft 也只是草稿，我确认后才会发。\n\n"
+              f"## 工作手册\n{HANDBOOK}\n\n{related_memory(str(ev.get('content') or '') + question)}\n\n"
+              f"## 原消息\n{json.dumps(ev, ensure_ascii=False)}\n\n## 现在的草稿\n{draft or '（还没有）'}\n\n## 之前的判断依据\n{(x or {}).get('reason') or (d or {}).get('reason') or ''}\n\n"
+              f"## 之前问过的\n{json.dumps(qa, ensure_ascii=False)}\n\n## 我的问题\n{question}")
+    raw = ai_exec(prompt)
+    try:
+        r = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
+    except ValueError:
+        r = {"answer": raw.strip()[:800] or "AI 没给出回答，稍后再问一次。", "new_draft": ""}
+    ans, nd = str(r.get("answer") or "").strip(), str(r.get("new_draft") or "").strip()
+    if x is not None:
+        y = _open_load()
+        if no in y:
+            y[no].setdefault("qa", []).append({"问": question, "答": ans[:500], "改写": nd[:300], "时间": f"{dt.datetime.now():%H:%M}"}); _open_save(y)
+    if nd:
+        if f:
+            d["draft"] = nd; json.dump(d, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        elif ev:
+            name = save_draft(ev, nd, reason=(x or {}).get("reason", ""))
+            dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
+            json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    notify(f"💡 {no} AI 的回答", (ans or "（没有回答）") + (f"\n\n新草稿：{nd}\n要发就回「{no} 可以发送」，再改回「{no} 改成：…」，继续问回「{no} 问：…」。" if nd else f"\n\n还想问就继续「{no} 问：…」；决定好了回「{no} 可以发送」/「{no} 不发」，或自己在原会话回。"))
+
+
 def command(e):
     """本人在提醒群里回草稿：「#编号 可以发送 / 发送 / 发」「#编号 不发 / 删除 / 作废」「#编号 改成：新内容」「#编号 暂存：内容」「#编号 不归我」「全部发送」「清空」。"""
     text = str(e.get("content") or "").strip()
@@ -493,6 +584,9 @@ def command(e):
         if f:
             os.remove(f)
         open_close(m.group(1), "你说不归你，群里不回"); return
+    m = re.match(r"(#[A-Za-z0-9]{3,8})\s*(?:问|请问|问一下)[：:]\s*(.+)", text, re.S)
+    if m:
+        ask_ai(m.group(1), m.group(2).strip()); return
     m = re.match(r"(#[A-Za-z0-9]{3,8})\s*暂存[：:]\s*(.+)", text, re.S)
     if m:
         stash(m.group(1), m.group(2).strip()); return
@@ -513,7 +607,12 @@ def command(e):
             os.remove(f); open_close(no, "你说不发，草稿已作废")
         elif m or re.search(r"可以|发送|发出|发吧|^发", text):
             try:
-                reply(d["event"], d["draft"], keep_draft=False); os.remove(f); open_close(no, "已按你确认发出：" + d["draft"][:100])
+                reply(d["event"], d["draft"], keep_draft=False)
+                st = d.get("sticker") if CFG.get("emoji") else ""
+                if st:
+                    send_sticker(d["event"], st)
+                audit(no, d["event"], d["draft"], text, sticker=st, reason=d.get("reason", ""))
+                os.remove(f); open_close(no, "已按你确认发出：" + d["draft"][:100])
             except SendFailed:
                 pass                                                       # 已用机器人通知过；草稿还在，恢复后再回「可以发送」
             except Exception as ex:
@@ -556,43 +655,50 @@ def relevant(e):
 
 
 def listen(args, tag):
-    while in_window():
-        dur = min(29, minutes_left())
-        if dur < 1:
-            break
-        try:
-            p = popen([DWS, "event", "+listen-im", *args, "--duration", f"{dur}m"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        except FileNotFoundError:
-            log(tag, "找不到钉钉 CLI（dws），10 分钟后再试")
-            if FAILS.get(tag) != -1:
-                FAILS[tag] = -1
-                notify("钉钉 CLI 没装好", f"{tag}：找不到 dws 命令，监听没有启动。请让你的 AI 助手按部署文档第 0 步装好 dws，再自己扫码登录钉钉。")
-            time.sleep(600); continue
-        t0, got, err = time.time(), 0, ""
-        for line in p.stdout:
+    LISTENERS[tag] = {"started": time.time(), "alive": True}
+    status_event("监听已启动", tag, announce=True)
+    try:
+        while in_window():
+            dur = min(29, minutes_left())
+            if dur < 1:
+                break
             try:
-                e = json.loads(line)
-                got += 1
-            except ValueError:
-                if "cooldown" in line:
-                    log(tag, "订阅冷却，60 秒后重连"); time.sleep(60)
-                elif line.strip():
-                    err = line.strip()[:200]
-                continue
-            if isinstance(e, dict) and "error" in e:
-                err = json.dumps(e["error"], ensure_ascii=False)[:200]; continue
-            if relevant(e):
-                SEEN.add(e.get("message_id")); Q.put(e)
-        p.wait()
-        if time.time() - t0 < 60 and not got:                             # 不到 1 分钟就断、一条都没收到 = 异常（登录过期、网络等）
-            FAILS[tag] = FAILS.get(tag, 0) + 1
-            log("监听异常", tag, FAILS[tag], "次", err)
-            if FAILS[tag] == 3:
-                notify("钉钉监听连不上", f"{tag} 连续 3 次断开：{err or '无输出'}。如果是登录过期，请在终端运行 dws auth login 扫码。")
-            time.sleep(min(300, 30 * FAILS[tag]))
-        else:
-            FAILS[tag] = 0
-            log(tag, "本轮监听结束，续期"); time.sleep(5)
+                p = popen([DWS, "event", "+listen-im", *args, "--duration", f"{dur}m"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            except FileNotFoundError:
+                log(tag, "找不到钉钉 CLI（dws），10 分钟后再试")
+                if FAILS.get(tag) != -1:
+                    FAILS[tag] = -1
+                    status_event("监听异常", f"{tag}：找不到 dws 命令", announce=True)
+                time.sleep(600); continue
+            t0, got, err = time.time(), 0, ""
+            for line in p.stdout:
+                try:
+                    e = json.loads(line)
+                    got += 1
+                except ValueError:
+                    if "cooldown" in line:
+                        log(tag, "订阅冷却，60 秒后重连"); time.sleep(60)
+                    elif line.strip():
+                        err = line.strip()[:200]
+                    continue
+                if isinstance(e, dict) and "error" in e:
+                    err = json.dumps(e["error"], ensure_ascii=False)[:200]; continue
+                if relevant(e):
+                    SEEN.add(e.get("message_id")); Q.put(e)
+                    LAST_EVENT.update(t=time.time(), summary=f"{tag} / {e.get('sender')}：{str(e.get('content') or '')[:80]}")
+                    status_event("收到消息", LAST_EVENT["summary"], announce=True)
+            p.wait()
+            if time.time() - t0 < 60 and not got:                             # 不到 1 分钟就断、一条都没收到 = 异常（登录过期、网络等）
+                FAILS[tag] = FAILS.get(tag, 0) + 1
+                log("监听异常", tag, FAILS[tag], "次", err)
+                status_event("监听异常", f"{tag} 连续 {FAILS[tag]} 次断开：{err or '无输出'}", announce=FAILS[tag] in (1, 3))
+                time.sleep(min(300, 30 * FAILS[tag]))
+            else:
+                FAILS[tag] = 0
+                log(tag, "本轮监听结束，续期"); time.sleep(5)
+    finally:
+        LISTENERS.setdefault(tag, {})["alive"] = False
+        status_event("监听已停止", tag, announce=False)
 
 
 def decide(batch):  # noqa: C901
@@ -630,11 +736,12 @@ def decide(batch):  # noqa: C901
 
 
 def emoji_rules():
+    """v2.8：不再自动点表情；表情包只作为草稿的附带建议，本人确认发送时才一起发。"""
     lib = stickers()
-    return ("\n表情（可选）：JSON 里可以再加 \"emoji\"（给原消息点的表情，只能从 " + json.dumps(CFG["emoji_names"], ensure_ascii=False) + " 里选，不用就留空）"
-            + ("和 \"sticker\"（随回复发的表情包，必须一字不差地从这个名单里选：" + "、".join(lib) + "；不用就留空）" if lib else "") +
-            "。只在 mine=true 时用；对方道谢、通知已完成、轻松闲聊时适合点表情（这时 action 可以是 ignore，只点表情不回字）；"
-            "表情包只在气氛轻松时随回复发，正式通知、问题、派活、有争议、有人着急的消息一律不用。拿不准就留空。")
+    if not lib:
+        return ""
+    return ("\n表情包（可选）：action=reply 时 JSON 里可以再加 \"sticker\"（随草稿建议的表情包，必须一字不差地从这个名单里选："
+            + "、".join(lib) + "；不用就留空）。只在 mine=true、气氛轻松时建议；正式通知、问题、派活、有争议的一律留空。")
 
 
 def remember(e, d):
@@ -699,13 +806,14 @@ def reply(e, text, keep_draft=True):
         raise SendFailed("回复失败：" + err)
 
 
-def save_draft(e, text):
+def save_draft(e, text, sticker="", reason=""):
     name = dt.datetime.now().strftime("%m%d-%H%M%S-") + re.sub(r"[^A-Za-z0-9]", "", e["message_id"])[:12] + ".json"
-    json.dump({"event": e, "draft": text}, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    json.dump({"event": e, "draft": text, "sticker": sticker, "reason": reason}, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     return name
 
 
 def handle(batch):
+    """v2.8：任何回复都先写草稿交本人确认，不自动发出任何消息（包括表情）。"""
     e = batch[-1]
     d = decide(batch)
     remember(e, d)
@@ -713,43 +821,26 @@ def handle(batch):
     ats = re.findall(r"@([^\s@]+)", str(e.get("content") or ""))
     if ats and CFG["my_name"] not in ats and "所有人" not in ats:              # @ 的是别人：不插话（v2.6，11-18 梦无矶回了 项目助手 @ 另一位同事 的消息）
         log("别人之间的对话，不回", e.get("sender"), ats[:3]); return
-    fun = CFG.get("emoji") and d.get("mine") is True and can_reply(e.get("conversation_id")) and CFG["mode"] != "draft" and CFG.get("scope_confirmed")
     if d.get("action") == "ignore":
-        if fun and d.get("emoji") and react(e, d["emoji"]):
-            log("已点表情", d["emoji"], e.get("message_id"))
         return
     brief = f"{e.get('sender')}：{str(e.get('content'))[:200]}"
     if d.get("mine") is not True and d.get("action") == "reply":
         d["action"] = "escalate"                                           # 不确定归我就不替我回（v2.5.1）
     if d.get("action") != "reply" or not can_reply(e.get("conversation_id")):
         no = open_add(e, "escalate", d.get("reason") or "")
+        x = _open_load(); x[no]["reason"] = d.get("reason") or ""; _open_save(x)
         if d.get("mine") is True:
-            notify(f"🔔 {no} 需要你处理", f"{brief}\n原因：{d.get('reason')}\n你在原会话回复后，这里会自动补一条「已处理」。")
-            ack(e)
+            notify(f"🔔 {no} 需要你处理", f"{brief}\n原因：{d.get('reason')}\n想先问清楚：回「{no} 问：……」。你在原会话回复后，这里会自动补一条「已处理」。")
         else:
-            notify(f"❓ {no} 是不是归你？", f"{brief}\n原因：{d.get('reason')}\n群里我没回任何话。归你就在原会话自己回；不归你在这里回「{no} 不归我」。")
+            notify(f"❓ {no} 是不是归你？", f"{brief}\n原因：{d.get('reason')}\n群里没回任何话。归你就在原会话自己回；不归你在这里回「{no} 不归我」；拿不准回「{no} 问：……」。")
         return
-    with LOCK:
-        SENT[:] = [t for t in SENT if t > time.time() - 600]
-        over = len(SENT) >= CFG["max_auto_replies_per_10min"]
-    auto = CFG["mode"] != "draft" and CFG.get("scope_confirmed")           # auto 直接回；draft 或职责范围 / 规则还没确认时全部出草稿
-    if not auto or over:
-        name = save_draft(e, d.get("text", ""))
-        no = open_add(e, "draft", "草稿：" + d.get("text", "")[:20])
-        dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
-        json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-        notify(f"📝 {no} 草稿待确认", f"{brief}\n草稿：{d.get('text', '')[:200]}\n在这里回：「{no} 可以发送」/「{no} 不发」/「{no} 改成：新内容」")
-        return
-    reply(e, d.get("text", ""))
-    with LOCK:
-        SENT.append(time.time())
-    log("已自动回复", e.get("message_id"))
-    extra = ""
-    if fun and d.get("emoji") and react(e, d["emoji"]):
-        extra += f"\n点了表情：{d['emoji']}"
-    if fun and d.get("sticker") and send_sticker(e, d["sticker"]):
-        extra += f"\n发了表情包：{d['sticker']}"
-    notify("💬 已自动回复", f"{brief}\n回复：{d.get('text', '')[:300]}{extra}")
+    sticker = d.get("sticker") if CFG.get("emoji") and d.get("sticker") in stickers() else ""
+    name = save_draft(e, d.get("text", ""), sticker=sticker, reason=d.get("reason") or "")
+    no = open_add(e, "draft", "草稿：" + d.get("text", "")[:20])
+    dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
+    json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    notify(f"📝 {no} 草稿待你确认", f"{brief}\n草稿：{d.get('text', '')[:200]}" + (f"\n配表情包：{sticker}" if sticker else "") + f"\n依据：{(d.get('reason') or '')[:120]}"
+           f"\n回：「{no} 可以发送」/「{no} 不发」/「{no} 改成：新内容」/「{no} 问：……」")
 
 
 ACTIVE = {"n": 0}
@@ -785,13 +876,16 @@ def worker(temp=False):
             with LOCK, open(os.path.join(HOME, "inbox.jsonl"), "a", encoding="utf-8") as f:
                 for x in batch:
                     f.write(json.dumps({**x, "_t": int(time.time())}, ensure_ascii=False) + "\n")   # _t：保留期清理用
+            status_event("开始处理", f"{batch[-1].get('sender')}：{str(batch[-1].get('content') or '')[:100]}", announce=True)
             try:
                 handle(batch)
+                status_event("处理完成", f"{batch[-1].get('sender')}：{str(batch[-1].get('content') or '')[:100]}", announce=True)
             except SendFailed:
+                status_event("处理完成", "消息已转为草稿，等待发送恢复或本人确认", announce=True)
                 pass                                                       # 发不出去已用机器人通知本人，回复存成了草稿
             except Exception as ex:
                 e = batch[-1]
-                log("处理失败", repr(ex)); notify("助手处理失败", f"{e.get('sender')}：{str(e.get('content'))[:120]}\n{ex!r}"[:300])
+                log("处理失败", repr(ex)); status_event("处理失败", f"{e.get('sender')}：{str(e.get('content'))[:120]}\n{ex!r}"[:300], announce=True)
     finally:
         with LOCK:
             ACTIVE["n"] -= 1
@@ -811,6 +905,35 @@ def supervisor():
         time.sleep(5)
 
 
+def remind_due(now=None):
+    """超过 remind_after_minutes（默认 120 分钟，0 = 不再提醒）还没处理的事，在提醒群合并再提醒一次；之后每隔同样时间再提醒（v2.8，梦无矶 11-18）。"""
+    mins = int(CFG.get("remind_after_minutes") or 0)
+    if mins <= 0:
+        return []
+    now = now or time.time(); due = []
+    d = _open_load()                                                       # _open_save 自己会加锁，这里不能再套 LOCK（会死锁）
+    for no, x in d.items():
+        last = x.get("reminded") or x.get("ts")
+        if last and now - last >= mins * 60:
+            due.append((no, x)); x["reminded"] = now
+    if due:
+        _open_save(d)
+    if due:
+        hrs = f"{mins // 60} 小时" if mins % 60 == 0 else f"{mins} 分钟"
+        rows = [f"{no} {x['who']}：{x['what'][:40]}（{x['at']}）" for no, x in due]
+        notify(f"⏰ {len(due)} 件超过 {hrs}还没处理", "\n".join(rows) + f"\n处理：回「#编号 可以发送 / 不发 / 问：…」，或在原会话自己回。改提醒间隔：发「提醒间隔 3小时」，关掉发「提醒间隔 关」。")
+    return due
+
+
+def reminder_loop():
+    while in_window():
+        try:
+            remind_due()
+        except Exception as ex:
+            log("超时提醒失败", repr(ex))
+        time.sleep(300)
+
+
 def daily_summary():
     """21:00 退出前写当天总结（结构化），第二天上班由 morning_report() 发到本人私聊。"""
     today = dt.date.today().isoformat()
@@ -818,7 +941,7 @@ def daily_summary():
     lines = open(p, encoding="utf-8").read().splitlines() if os.path.exists(p) else []
     cnt = lambda k: sum(1 for l in lines if k in l)
     acts = [l.split("决定 ", 1)[1] for l in lines if "决定 " in l]
-    body = [f"- 处理相关消息 {len(acts)} 批：自动回复 {cnt('已自动回复')}，写草稿 {sum(1 for a in acts if ' reply ' in a) - cnt('已自动回复')}，"
+    body = [f"- 处理相关消息 {len(acts)} 批：写草稿 {sum(1 for a in acts if ' reply ' in a)}（都由你确认后才发），"
             f"交给我 {sum(1 for a in acts if ' escalate ' in a)}，忽略 {sum(1 for a in acts if ' ignore ' in a)}",
             f"- 新记的负责人 / 问题处理：{cnt('记忆追加')} 次",
             f"- 异常：处理失败 {cnt('处理失败')} 次，监听异常 {cnt('监听异常')} 次",
@@ -844,7 +967,7 @@ def morning_report():
         body = text[start: min(nxt) if nxt else len(text)].split("\n", 1)[1].strip()
     else:
         day, body = "无", "（还没有前一天的总结）"
-    msg = f"【群消息助手每日汇报｜{dt.date.today():%m-%d}】\n前一天（{day}）：\n{body}\n今天：09:00–21:00 监听，模式 {CFG['mode']}。"
+    msg = f"【群消息助手每日汇报｜{dt.date.today():%m-%d}】\n前一天（{day}）：\n{body}\n今天：09:00–21:00 监听，所有回复都先写草稿，你确认后才发。"
     op = _open_load()
     if op:
         msg += f"\n还没处理完 {len(op)} 件：" + "；".join(f"{no} {x['who']}：{x['what'][:20]}" for no, x in list(op.items())[:10])
@@ -871,7 +994,7 @@ def review():
     picks = range(1, len(items) + 1) if ans == "a" else [int(n) for n in ans.split()]
     for n in picks:
         d = items[n - 1]
-        reply(d["event"], d["draft"]); os.remove(d["_f"]); open_close(d.get("todo", ""), "草稿已发送"); print("已发送", n)
+        reply(d["event"], d["draft"]); audit(d.get("todo", ""), d["event"], d["draft"], "命令行 review 确认", reason=d.get("reason", "")); os.remove(d["_f"]); open_close(d.get("todo", ""), "草稿已发送"); print("已发送", n)
 
 
 def status():
@@ -879,7 +1002,7 @@ def status():
     p = os.path.join(HOME, "logs", today + ".log")
     lines = open(p, encoding="utf-8").read().splitlines() if os.path.exists(p) else []
     acts = [l for l in lines if "决定 " in l]
-    print(f"今天（{today}）：处理 {len(acts)} 批，自动回复 {sum('已自动回复' in l for l in lines)} 条，"
+    print(f"今天（{today}）：处理 {len(acts)} 批，你确认后发出 {sum(1 for l in (open(AUDIT, encoding='utf-8') if os.path.exists(AUDIT) else []) if today in l)} 条，"
           f"交给你 {sum(' escalate ' in l for l in acts)} 件，忽略 {sum(' ignore ' in l for l in acts)} 批，失败 {sum('处理失败' in l for l in lines)} 次")
     op = _open_load()
     print(f"还没处理完：{len(op)} 件（提醒群里也有）")
@@ -982,12 +1105,17 @@ def check():
     print(("✅ " if CFG["groups"] or CFG["readonly_groups"] else "❌ ") + f"监听群 {len(CFG['groups'])} 个可回复、{len(CFG['readonly_groups'])} 个只看")
     print(("✅ " if CFG.get("scope_confirmed") and os.path.exists(os.path.join(MEMDIR, "职责范围.md")) else "❌ ") + "职责范围和回复规则已确认（没确认前只写草稿）")
     print("表情", "开" if CFG.get("emoji") else "关", "| 表情包", len(stickers()), "张" + ("" if stickers() else "（未下载：python agent.py stickers）"))
-    print("模式", CFG["mode"], "| 常驻并行", CFG["workers"], "| 积压超过", CFG["burst_threshold"], "条开子 Agent，最多", CFG["max_workers"], "个 | 合并秒数", CFG["merge_seconds"], "| 模型", CFG["codex_model"] or "默认")
+    print("回复方式：一律草稿，本人确认后发（v2.8 无自动回复）", "| 常驻并行", CFG["workers"], "| 积压超过", CFG["burst_threshold"], "条开子 Agent，最多", CFG["max_workers"], "个 | 合并秒数", CFG["merge_seconds"], "| 模型", CFG["codex_model"] or "默认")
 
 
 def main():
     if len(sys.argv) >= 2 and sys.argv[1] == "clear":
         n, k = clear_all(); print(f"已清空：{n} 件没处理完的事、{k} 份草稿，都没有发出"); return
+    if len(sys.argv) >= 2 and sys.argv[1] == "audit":
+        rows = [json.loads(l) for l in open(AUDIT, encoding="utf-8")] if os.path.exists(AUDIT) else []
+        for r in rows[-int(sys.argv[2]) if len(sys.argv) > 2 else -20:]:
+            print(r["发出时间"], r["群"], "←", r["原消息"]["谁"], "｜发出：", r["发出内容"][:60], "｜确认：", r["确认人"], "｜问过 AI", len(r["确认前问过 AI"]), "次")
+        print("共", len(rows), "条，文件", AUDIT); return
     if len(sys.argv) >= 2 and sys.argv[1] == "purge":
         print("已清理原始记录", purge_now(), "条 / 个（记忆和草稿没动）"); return
     if len(sys.argv) >= 2 and sys.argv[1] == "stickers":
@@ -996,7 +1124,7 @@ def main():
         return {"review": review, "check": check, "status": status}[sys.argv[1]]()
     if len(sys.argv) == 3 and sys.argv[1] == "send":
         d = json.load(open(os.path.join(HOME, "drafts", sys.argv[2]), encoding="utf-8"))
-        reply(d["event"], d["draft"]); os.remove(os.path.join(HOME, "drafts", sys.argv[2])); print("已发送"); return
+        reply(d["event"], d["draft"]); audit(d.get("todo", ""), d["event"], d["draft"], "命令行 send 确认", reason=d.get("reason", "")); os.remove(os.path.join(HOME, "drafts", sys.argv[2])); print("已发送"); return
     if not in_window():
         log("窗口外，不启动"); return
     if CFG.get("notify_group"):
@@ -1010,15 +1138,19 @@ def main():
         w.start()
     threading.Thread(target=batcher, daemon=True).start()
     threading.Thread(target=supervisor, daemon=True).start()
-    log("启动", VERSION, "模式", CFG["mode"])
+    log("启动", VERSION, "（无自动回复，草稿确认）")
+    status_event("已上岗", status_snapshot(), announce=True)
     threading.Thread(target=morning_report, daemon=True).start()
     threading.Thread(target=dws_version_check, daemon=True).start()
+    threading.Thread(target=reminder_loop, daemon=True).start()
     threading.Thread(target=self_update_check, daemon=True).start()
     threading.Thread(target=cleanup_old, daemon=True).start()
+    threading.Thread(target=heartbeat_loop, daemon=True).start()
     upgrade_ask()
     while in_window():
         time.sleep(30)
     daily_summary()
+    status_event("已停止", "值守窗口结束；" + status_snapshot(), announce=True)
     log("到点退出")
 
 

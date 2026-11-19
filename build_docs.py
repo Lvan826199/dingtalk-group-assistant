@@ -18,7 +18,7 @@ for doc, heads in DOCS.items():
     for i, bk in enumerate(re.findall(r"```python\n(.*?)```", s, re.S)):
         compile(bk, f"{doc}#{i}", "exec")
     open(p, "w", encoding="utf-8").write(s)
-    if SHARE and os.path.isdir(SHARE):
+    if os.path.isdir(SHARE) and doc.startswith("分享-"):                 # 共享盘只放最新的部署文档（用户 11-18：内网只提供最新版本）
         shutil.copy(p, SHARE)
     pass   # 仓库里的文档副本（11-18 起放 GitHub 私有仓库）
     print("已生成", doc, "版本", ver)
