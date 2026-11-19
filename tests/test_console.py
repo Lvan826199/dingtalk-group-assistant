@@ -134,5 +134,5 @@ def test_setup_notify_binds_existing_group_and_robot_without_creating(make_agent
 def test_console_lan_mode_link_uses_lan_address(make_agent):
     a, console, *_ = _boot(make_agent)
     assert console.url().startswith("http://127.0.0.1:")
-    a.CFG["console_host"] = "0.0.0.0"; a.CFG["console_url_host"] = "192.168.9.9"
-    assert console.lan() and console.url().startswith("http://192.168.9.9:")
+    a.CFG["console_host"] = "0.0.0.0"; a.CFG["console_url_host"] = "10.0.0.9"
+    assert console.lan() and console.url().startswith("http://10.0.0.9:")
