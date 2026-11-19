@@ -26,6 +26,8 @@ jobs:
           python-version: "3.12"
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: Build guide
         run: SITE_DIR=dist python3 -I site/build_site.py
       - name: Upload Pages artifact
