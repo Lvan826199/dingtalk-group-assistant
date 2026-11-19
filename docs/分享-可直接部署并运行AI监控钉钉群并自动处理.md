@@ -1020,7 +1020,29 @@ def relevant(e):
     if e.get("message_id") in SEEN:
         return False
     text = str(e.get("content") or "") + json.dumps(e.get("quoted_message") or "", ensure_ascii=False)
-    return any(k in text for k in CFG["keywords"] + [CFG["my_name"]]) or sender in CFG["people"]
+    return any(k in text for k in CFG["keywords"] + [CFG["my_name"], "@所有人", "@全体成员"]) or sender in CFG["people"]   # @所有人 也要看（11-19 被漏过）
+
+
+def backfill_loop():
+    """兜底补读（11-19）：实时监听每 29 分钟续一次期，续期间隙、断线、订阅冷却时的消息会丢。
+    每 backfill_minutes 分钟（默认 30）把各群从上次补读起的消息不过滤地拉一遍，没见过、又和我有关的照常交给 AI。"""
+    since = dt.datetime.now() - dt.timedelta(minutes=30)
+    while in_window():
+        time.sleep(max(5, int(CFG.get("backfill_minutes") or 30)) * 60)
+        now = dt.datetime.now()
+        for cid, name in {**CFG["groups"], **CFG["readonly_groups"]}.items():
+            r = run([DWS, "chat", "message", "list", "--group", cid, "--time", f"{since:%Y-%m-%d %H:%M:%S}", "--direction", "newer", "--limit", "50"], timeout=60)
+            try:
+                msgs = json.loads(r.stdout).get("messages") or []
+            except (ValueError, AttributeError):
+                log("补读失败", name, str(getattr(r, "stdout", ""))[:120]); continue
+            for m in msgs:
+                e = {"sender": m.get("sender"), "content": m.get("content") or m.get("text"), "conversation_id": m.get("openConversationId") or cid,
+                     "message_id": m.get("openMessageId") or m.get("messageId"), "quoted_message": m.get("quotedMessage")}
+                if e["message_id"] and relevant(e):
+                    SEEN.add(e["message_id"]); Q.put(e)
+                    log("补读到漏掉的消息", name, e["sender"], str(e["content"])[:60])
+        since = now - dt.timedelta(minutes=2)   # 和上一轮留 2 分钟重叠，SEEN 去重
 
 
 def listen(args, tag):
@@ -1512,6 +1534,7 @@ def main():
     threading.Thread(target=morning_report, daemon=True).start()
     threading.Thread(target=dws_version_check, daemon=True).start()
     threading.Thread(target=reminder_loop, daemon=True).start()
+    threading.Thread(target=backfill_loop, daemon=True).start()
     threading.Thread(target=self_update_check, daemon=True).start()
     threading.Thread(target=cleanup_old, daemon=True).start()
     threading.Thread(target=heartbeat_loop, daemon=True).start()

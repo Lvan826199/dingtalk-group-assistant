@@ -295,3 +295,23 @@ def test_remind_after_two_hours_and_configurable(make_agent):
     assert a.remind_due(t0 + 152 * 60)                                    # 距上次提醒超过 30 分钟
     a.relevant(msg("提醒间隔 关", sender="本人", cid="cidN", mid="i2"))
     assert a.remind_due(t0 + 999 * 60) == []
+
+
+def test_backfill_catches_filtered_and_missed(make_agent, monkeypatch):
+    """11-19：实时监听漏掉的消息（续期间隙 / 过滤器没留 @所有人）由兜底补读捡回；见过的、和我无关的不重复交给 AI。"""
+    import json as _j
+    from conftest import R
+    a, _, _ = make_agent({"groups": {"cidG": "测试群"}, "backfill_minutes": 5})
+    msgs = [{"sender": "同事甲", "content": "@所有人 安卓 1.1.1 已提审", "openConversationId": "cidG", "openMessageId": "m1"},
+            {"sender": "同事乙", "content": "@本人 帮看下合同", "openConversationId": "cidG", "openMessageId": "m2"},
+            {"sender": "同事丙", "content": "@同事丁 午饭吃啥", "openConversationId": "cidG", "openMessageId": "m3"}]
+    a.SEEN.add("m2")                                     # 实时监听已经收过
+    a.run = lambda args, **k: R(0, _j.dumps({"messages": msgs}))
+    rounds = iter([True, False])
+    a.in_window = lambda: next(rounds)
+    monkeypatch.setattr(a.time, "sleep", lambda s: None)
+    a.backfill_loop()
+    got = []
+    while not a.Q.empty():
+        got.append(a.Q.get()["message_id"])
+    assert got == ["m1"]
