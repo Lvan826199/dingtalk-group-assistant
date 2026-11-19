@@ -1,7 +1,10 @@
 name: test
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
 jobs:
   test:
+    # 私有仓库不跑（GitHub 私有仓库的 Actions 要计费分钟，macOS 按 10 倍、Windows 按 2 倍算，11-19 一天推了十几次就超了额度；
+    # 超额后任务直接报失败）。同样的代码导出到开源仓库后免费在三系统上全跑，以开源仓库的结果为准。手动触发时私有仓库也能跑。
+    if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}
     strategy:
       fail-fast: false
       matrix:

@@ -2573,6 +2573,16 @@ def state():
             except ValueError:
                 pass
     done.reverse()
+    sent = {}                                   # 发出留痕：编号 → 实际发出的内容（「已处理」里区分「已发送」）
+    if os.path.exists(A["AUDIT"]):
+        for line in open(A["AUDIT"], encoding="utf-8").readlines()[-500:]:
+            try:
+                r = json.loads(line); sent[r.get("编号")] = r.get("发出内容", "")
+            except ValueError:
+                pass
+    for d in done:
+        d["sent"] = sent.get(d.get("no"), "")
+        d["result"] = "已发送" if d["sent"] else ("不发" if "不发" in d.get("why", "") else ("不归我" if "不归你" in d.get("why", "") else ("你已回复" if "回复" in d.get("why", "") else "已处理")))
     alive = sum(1 for v in A["LISTENERS"].values() if v.get("alive"))
     beat = A.get("LAST_EVENT", {}).get("t") or 0
     fails = {k: v for k, v in A.get("FAILS", {}).items() if v and v != 0}
@@ -2779,6 +2789,7 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1f
 .why{margin-top:8px;color:var(--muted);font-size:12.5px;display:flex;gap:6px}.why::before{content:"💡"}
 .tag{display:inline-block;border-radius:99px;padding:0 8px;font-size:11.5px;font-weight:600}.t-red{background:var(--red-soft);color:var(--red)}.t-ok{background:var(--green-soft);color:var(--green)}
 .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.dtabs{display:flex;gap:6px;margin:0 0 10px}.draft.sent{background:var(--green-soft)}.draft.sent::before{content:"已发出";color:var(--green)}.t-gray{background:var(--soft);color:var(--muted)}
 .empty{color:var(--faint);text-align:center;padding:48px 10px}.empty .big{font-size:30px;display:block;margin-bottom:6px}
 .mask{position:fixed;inset:0;background:rgba(10,18,35,.25);opacity:0;pointer-events:none;transition:.2s;z-index:9}.mask.on{opacity:1;pointer-events:auto}
 aside{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--surface);box-shadow:none;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:10}
@@ -2806,7 +2817,7 @@ textarea{min-height:96px;resize:vertical}textarea:focus,input.q:focus{border-col
 <aside id="panel"><div class="ph"><span class="av" id="pav"></span><div><div class="t" id="ptitle"></div><div class="s" id="psub"></div></div><span class="sp"></span><button class="btn sm" onclick="closeP()">关闭</button></div><div class="pb" id="pbody"></div><div class="pf" id="pfoot"></div></aside>
 <div class="toast" id="toast"></div>
 <script>
-const K=new URLSearchParams(location.search).get('k')||'';let S=null,sel=null,seen=new Set(),first=true;const notes={};
+const K=new URLSearchParams(location.search).get('k')||'';let dfilter='all',S=null,sel=null,seen=new Set(),first=true;const notes={};
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const COLORS=['#3360e6','#1c8a4a','#c27a00','#8a4fd8','#d23b3b','#0f8f9e','#c2477d','#5b6b86'];
 function av(n){n=String(n||'?');let h=0;for(const ch of n)h=(h*31+ch.charCodeAt(0))>>>0;return `<span class="av" style="background:${COLORS[h%COLORS.length]}">${esc(n.replace(/[-_ ].*/,'').slice(-2))}</span>`}
@@ -2821,7 +2832,9 @@ function empty(t){return `<div class="empty"><span class="big">☕</span>${t}</d
 function render(){const s=S,ok=/^(\d+)\/\1$/.test(s.listeners)&&s.listeners!=='0/0';
 $('stat').innerHTML=`<span class="chip duty d-${s.duty}" style="cursor:pointer" onclick="openH()" title="点开按群看最近消息；最近收到消息 ${esc(s.last_event_t||'无')}；${esc(s.last_event||'')}"><span class="dot"></span><b>${esc(s.duty_text)}</b> · 监听 ${s.listeners}${s.last_event_t?' · 最近 '+s.last_event_t:''}</span><span class="chip">要你判断 <b>${s.judge.length}</b></span><span class="chip">草稿待发 <b>${s.send.length}</b></span><span class="chip">今天已处理 <b>${s.today_done}</b></span><span class="chip">${esc(s.me)} · ${s.time}</span>`;$('ver').textContent=s.version;
 $('judge').innerHTML=s.judge.map(c=>card(c,'judge')).join('')||empty('没有要你判断的事');$('send').innerHTML=s.send.map(c=>card(c,'send')).join('')||empty('没有待发的草稿');
-$('done').innerHTML=s.done.map(d=>`<div class="card">${head({who:d.who,group:'',no:d.no,at:d.done})}<div class="txt">${esc(d.what)}</div><div class="why" style="--x:0">${esc(d.why)}</div></div>`).join('')||empty('今天还没有处理记录');
+const dl=s.done.filter(d=>dfilter==='all'||d.result==='已发送');
+$('done').innerHTML=`<div class="dtabs"><button class="btn sm${dfilter==='all'?' p':''}" onclick="dfilter='all';render()">全部 ${s.done.length}</button><button class="btn sm${dfilter==='sent'?' p':''}" onclick="dfilter='sent';render()">已发送 ${s.done.filter(d=>d.result==='已发送').length}</button></div>`+
+(dl.map(d=>`<div class="card">${head({who:d.who,group:'',no:d.no,at:d.done})}<div class="txt">${esc(d.what)}</div>${d.sent?`<div class="draft sent">${esc(d.sent)}</div>`:''}<div class="why" style="--x:0"><span class="tag ${d.result==='已发送'?'t-ok':'t-gray'}">${d.result}</span> ${d.sent?'':esc(d.why)}</div></div>`).join('')||empty(dfilter==='sent'?'还没有发出去的消息':'今天还没有处理记录'));
 $('n1').textContent=s.judge.length;$('n2').textContent=s.send.length;$('n3').textContent=s.done.length;
 const open=[...s.judge,...s.send],n=open.length;document.title=(n?'('+n+') ':'')+'群消息助手 · 操作台';const now=new Set(open.map(c=>c.no));
 open.forEach(c=>{if(!seen.has(c.no)&&!first&&window.Notification&&Notification.permission==='granted'){const x=new Notification(`${c.draft?'草稿待发':'要你判断'} · ${c.who}`,{body:c.text.slice(0,90),tag:c.no});x.onclick=()=>{window.focus();openP(c.no)};notes[c.no]=x}});

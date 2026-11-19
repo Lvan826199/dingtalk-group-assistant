@@ -53,6 +53,7 @@ def test_console_send_goes_through_command_and_syncs(make_agent):
     s = console.state()
     assert n1 not in [c["no"] for c in s["send"]] and s["done"][0]["no"] == n1    # 页面：移到「已处理」
     assert os.path.exists(a.AUDIT)                                               # 留痕
+    d = console.state()["done"][0]; assert d["result"] == "已发送" and "765 已补测通过" in d["sent"]   # 「已处理」里看得到发出的内容
 
 
 def test_console_not_mine_and_reply_new(make_agent):
@@ -63,6 +64,7 @@ def test_console_not_mine_and_reply_new(make_agent):
     assert _post(console, {"no": n1, "action": "drop"})["msg"] == "已处理"
     assert not any("好了，已补测通过" in " ".join(c) for c in calls)               # 不发的草稿没发出去
     s = console.state(); assert not s["send"] and not s["judge"] and len(s["done"]) == 2
+    assert sorted(d["result"] for d in s["done"]) == ["不发", "已发送"]
 
 
 def test_todo_question_in_notify_group_gets_console_link(make_agent):
