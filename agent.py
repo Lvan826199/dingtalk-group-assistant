@@ -434,6 +434,8 @@ def minutes_left():
 def notify(title, text):
     """提醒本人：只走本人专属群的机器人（有推送、有历史）。机器人没配或发送失败时记进 待处理.md 和日志，第二天的汇报里会写出来。"""
     ok = False
+    if CFG.get("quiet_new_items") and title[:1] in ("🔔", "❓", "📝"):
+        log("新事项只进操作台，不发提醒群", title); return True          # 和别的值守并行时避免提醒群重复（11-19）
     if CFG.get("webhook") and CFG.get("secret"):
         ts = str(int(time.time() * 1000)); sec = CFG["secret"]
         sign = base64.b64encode(hmac.new(sec.encode(), f"{ts}\n{sec}".encode(), hashlib.sha256).digest()).decode()
@@ -455,10 +457,30 @@ def notify(title, text):
     return ok
 
 
-def setup_notify(wait_minutes=15):
+def _resolve_group(q):
+    """群名或 openConversationId → openConversationId（群名要唯一命中）。"""
+    if q.startswith("cid"):
+        return q
+    r = run([DWS, "chat", "+chat-search", "--query", q, "--format", "json"], timeout=60)
+    ids = list(dict.fromkeys(re.findall(r'"openConversationId"\s*:\s*"([^"]+)"', r.stdout or "")))
+    return ids[0] if len(ids) == 1 else None
+
+
+def setup_notify(wait_minutes=15, group="", webhook="", secret=""):
     """v3.0：提醒群自动建好（dws 建群，只有本人），再引导本人在群里加自定义机器人。
     钉钉开放接口不支持创建自定义机器人、也拿不到它的地址和密钥，这一步只能本人在群设置里点（约 1 分钟）；
     本人把地址和加签密钥直接发在这个群里，助手读到后自己写进配置、发一条自检，不用手改任何文件。"""
+    # 已有提醒群 / 机器人的直接绑定，不强制新建（11-19 梦无矶）：--group 群名或 cid；--webhook 地址 --secret SEC 密钥
+    if group:
+        cid = _resolve_group(group)
+        if not cid:
+            print(f"没找到唯一的群「{group}」，换个更完整的群名，或直接给 openConversationId"); return False
+        save_cfg("notify_group", cid); print("已绑定提醒群", group)
+    if webhook and secret:
+        save_cfg("webhook", webhook); save_cfg("secret", secret)
+    if CFG.get("notify_group") and CFG.get("webhook") and CFG.get("secret"):
+        ok = notify("🧪 助手自检", "已绑定你现有的提醒群和机器人：以后草稿、提醒、日报都从这里发。")
+        print("已用现有的群和机器人，自检", "成功" if ok else "失败（核对地址、密钥是否对应这个群的机器人）"); return ok
     cid = CFG.get("notify_group")
     if not cid:
         name = f"群消息助手·{CFG.get('my_name') or '提醒'}"
@@ -527,7 +549,10 @@ def open_close(no, why):
 def close_by_conversation(cid):
     """本人在这个会话里亲自回复了 → 这个会话里交给本人的事都算处理了。"""
     for no, x in list(_open_load().items()):
-        if x.get("cid") == cid and x.get("kind") == "escalate":
+        if x.get("cid") == cid:                                           # 本人（或代本人值守的程序）已在原会话回复：草稿也作废
+            f, _ = draft_by_no(no)
+            if f:
+                os.remove(f)
             open_close(no, "你已在该会话回复")
 
 
@@ -1358,7 +1383,8 @@ def main():
             raise SystemExit("用法：python agent.py watch [--once]")
         return watch(once="--once" in sys.argv[2:], auto="--auto" in sys.argv[2:])
     if len(sys.argv) >= 2 and sys.argv[1] == "setup-notify":
-        setup_notify(); return
+        opt = dict(zip(sys.argv[2::2], sys.argv[3::2]))                   # --group 群名/cid  --webhook 地址  --secret SEC…
+        setup_notify(group=opt.get("--group", ""), webhook=opt.get("--webhook", ""), secret=opt.get("--secret", "")); return
     if len(sys.argv) >= 2 and sys.argv[1] == "clear":
         n, k = clear_all(); print(f"已清空：{n} 件没处理完的事、{k} 份草稿，都没有发出"); return
     if len(sys.argv) >= 2 and sys.argv[1] == "audit":
@@ -1394,7 +1420,7 @@ def main():
     try:                                                                   # v3.0 本机操作台：页面上直接处理，和提醒群指令同步
         import console
         if console.start(globals()):
-            notify("🖥 打开操作台", f"[点这里打开操作台]({console.url()})\n只能在本机打开；有新的要处理会弹桌面通知，处理后提醒群和页面同步。")
+            notify("🖥 打开操作台", f"[点这里打开操作台]({console.url()})\n" + ("内网其他电脑也能打开（链接带密钥，别外传）" if console.lan() else "只能在本机打开；有新的要处理会弹桌面通知") + "，处理后提醒群和页面同步。")
     except Exception as ex:
         log("操作台没开起来", repr(ex)[:200])
     threading.Thread(target=morning_report, daemon=True).start()

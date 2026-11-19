@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 A = {}                     # agent.py 的全局变量（start 时传进来）
 TOKEN = ""
-CLOSED_N = 200             # 「已处理」列保留最近多少条
+CLOSED_N = 20              # 「已处理」列只显示最近 20 条（11-19 梦无矶：3 天内为主，但始终保证 20 条）
 POP = {"t": 0}             # 上次把操作台弹到前面的时间
 
 
@@ -245,8 +245,22 @@ class H(BaseHTTPRequestHandler):
         self._send(200, json.dumps({"msg": "已处理" if msg == "ok" else msg}, ensure_ascii=False))
 
 
+def _lan_ip():
+    import socket
+    try:
+        x = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); x.connect(("223.5.5.5", 80)); ip = x.getsockname()[0]; x.close(); return ip
+    except OSError:
+        return "127.0.0.1"
+
+
+def lan():
+    """console_host 设成 0.0.0.0（或本机内网 IP）= 允许内网其他电脑打开（比如助手装在 Mac、人在 Windows 上看）。"""
+    return (A["CFG"].get("console_host") or "127.0.0.1") not in ("127.0.0.1", "localhost")
+
+
 def url():
-    return f"http://127.0.0.1:{int(A['CFG'].get('console_port') or 8765)}/?k={TOKEN}"
+    host = A["CFG"].get("console_url_host") or (_lan_ip() if lan() else "127.0.0.1")
+    return f"http://{host}:{int(A['CFG'].get('console_port') or 8765)}/?k={TOKEN}"
 
 
 def start(ns):
@@ -312,8 +326,8 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1f
 .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .empty{color:var(--faint);text-align:center;padding:48px 10px}.empty .big{font-size:30px;display:block;margin-bottom:6px}
 .mask{position:fixed;inset:0;background:rgba(10,18,35,.25);opacity:0;pointer-events:none;transition:.2s;z-index:9}.mask.on{opacity:1;pointer-events:auto}
-aside{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--surface);box-shadow:-12px 0 40px rgba(10,20,45,.18);transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:10}
-aside.on{transform:none}.ph{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}.ph .t{font-weight:700}.ph .s{color:var(--muted);font-size:12.5px}
+aside{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--surface);box-shadow:none;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:10}
+aside.on{transform:none;box-shadow:-12px 0 40px rgba(10,20,45,.18)}.ph{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}.ph .t{font-weight:700}.ph .s{color:var(--muted);font-size:12.5px}
 .pb{flex:1;overflow:auto;padding:16px 20px;background:var(--soft)}.pf{border-top:1px solid var(--border);padding:14px 20px;background:var(--surface)}
 .bub{display:flex;gap:10px;margin-bottom:14px}.bub .av{width:28px;height:28px;font-size:12px}.bub .b{background:var(--surface);border:1px solid var(--border);border-radius:4px 12px 12px 12px;padding:8px 12px;max-width:100%}
 .bub .w{font-size:12px;color:var(--muted);margin-bottom:2px}.bub .w span{color:var(--faint);margin-left:6px}.bub .tx{white-space:pre-wrap;word-break:break-word}

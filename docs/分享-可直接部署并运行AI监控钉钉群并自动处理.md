@@ -233,7 +233,16 @@
 
 所有提醒（需要你处理、草稿待确认、已处理、每日汇报、监听异常）都由一个机器人发到只有你自己的群里：钉钉有推送，消息有历史可翻。
 
-AI 助手运行 `python C:\qa-agent\agent.py setup-notify`（macOS / Linux：`python3 ~/qa-agent/agent.py setup-notify`），它会：
+AI 助手先问：
+
+```
+1. 我已经有自己的提醒群（和机器人），直接用（推荐，不新建）
+2. 没有，帮我建一个
+```
+
+选 1：问群名，有机器人就请使用者把 Webhook 地址和 SEC 密钥发过来，运行 `python C:\qa-agent\agent.py setup-notify --group "<群名>" --webhook "<地址>" --secret "<SEC…>"`，助手绑定后发一条「🧪 助手自检」就完成；群里还没有机器人就只带 `--group`，按下面第 2～4 条加一个。
+
+选 2：AI 助手运行 `python C:\qa-agent\agent.py setup-notify`（macOS / Linux：`python3 ~/qa-agent/agent.py setup-notify`），它会：
 
 1. 用钉钉 CLI 自动建好群「群消息助手·<你的名字>」，只有你自己，并写进配置的 `notify_group`；
 2. 在这个群里发一条加机器人的步骤。**钉钉不允许程序代建自定义机器人、也拿不到它的地址和密钥，这一步只能本人点**：群设置 → 机器人 → 添加机器人 → 自定义 → 安全设置勾「加签」，复制 `SEC…` 密钥 → 完成后复制 Webhook 地址；
@@ -801,6 +810,8 @@ def minutes_left():
 def notify(title, text):
     """提醒本人：只走本人专属群的机器人（有推送、有历史）。机器人没配或发送失败时记进 待处理.md 和日志，第二天的汇报里会写出来。"""
     ok = False
+    if CFG.get("quiet_new_items") and title[:1] in ("🔔", "❓", "📝"):
+        log("新事项只进操作台，不发提醒群", title); return True          # 和别的值守并行时避免提醒群重复（11-19）
     if CFG.get("webhook") and CFG.get("secret"):
         ts = str(int(time.time() * 1000)); sec = CFG["secret"]
         sign = base64.b64encode(hmac.new(sec.encode(), f"{ts}\n{sec}".encode(), hashlib.sha256).digest()).decode()
@@ -822,10 +833,30 @@ def notify(title, text):
     return ok
 
 
-def setup_notify(wait_minutes=15):
+def _resolve_group(q):
+    """群名或 openConversationId → openConversationId（群名要唯一命中）。"""
+    if q.startswith("cid"):
+        return q
+    r = run([DWS, "chat", "+chat-search", "--query", q, "--format", "json"], timeout=60)
+    ids = list(dict.fromkeys(re.findall(r'"openConversationId"\s*:\s*"([^"]+)"', r.stdout or "")))
+    return ids[0] if len(ids) == 1 else None
+
+
+def setup_notify(wait_minutes=15, group="", webhook="", secret=""):
     """v3.0：提醒群自动建好（dws 建群，只有本人），再引导本人在群里加自定义机器人。
     钉钉开放接口不支持创建自定义机器人、也拿不到它的地址和密钥，这一步只能本人在群设置里点（约 1 分钟）；
     本人把地址和加签密钥直接发在这个群里，助手读到后自己写进配置、发一条自检，不用手改任何文件。"""
+    # 已有提醒群 / 机器人的直接绑定，不强制新建（11-19 梦无矶）：--group 群名或 cid；--webhook 地址 --secret SEC 密钥
+    if group:
+        cid = _resolve_group(group)
+        if not cid:
+            print(f"没找到唯一的群「{group}」，换个更完整的群名，或直接给 openConversationId"); return False
+        save_cfg("notify_group", cid); print("已绑定提醒群", group)
+    if webhook and secret:
+        save_cfg("webhook", webhook); save_cfg("secret", secret)
+    if CFG.get("notify_group") and CFG.get("webhook") and CFG.get("secret"):
+        ok = notify("🧪 助手自检", "已绑定你现有的提醒群和机器人：以后草稿、提醒、日报都从这里发。")
+        print("已用现有的群和机器人，自检", "成功" if ok else "失败（核对地址、密钥是否对应这个群的机器人）"); return ok
     cid = CFG.get("notify_group")
     if not cid:
         name = f"群消息助手·{CFG.get('my_name') or '提醒'}"
@@ -894,7 +925,10 @@ def open_close(no, why):
 def close_by_conversation(cid):
     """本人在这个会话里亲自回复了 → 这个会话里交给本人的事都算处理了。"""
     for no, x in list(_open_load().items()):
-        if x.get("cid") == cid and x.get("kind") == "escalate":
+        if x.get("cid") == cid:                                           # 本人（或代本人值守的程序）已在原会话回复：草稿也作废
+            f, _ = draft_by_no(no)
+            if f:
+                os.remove(f)
             open_close(no, "你已在该会话回复")
 
 
@@ -1725,7 +1759,8 @@ def main():
             raise SystemExit("用法：python agent.py watch [--once]")
         return watch(once="--once" in sys.argv[2:], auto="--auto" in sys.argv[2:])
     if len(sys.argv) >= 2 and sys.argv[1] == "setup-notify":
-        setup_notify(); return
+        opt = dict(zip(sys.argv[2::2], sys.argv[3::2]))                   # --group 群名/cid  --webhook 地址  --secret SEC…
+        setup_notify(group=opt.get("--group", ""), webhook=opt.get("--webhook", ""), secret=opt.get("--secret", "")); return
     if len(sys.argv) >= 2 and sys.argv[1] == "clear":
         n, k = clear_all(); print(f"已清空：{n} 件没处理完的事、{k} 份草稿，都没有发出"); return
     if len(sys.argv) >= 2 and sys.argv[1] == "audit":
@@ -1761,7 +1796,7 @@ def main():
     try:                                                                   # v3.0 本机操作台：页面上直接处理，和提醒群指令同步
         import console
         if console.start(globals()):
-            notify("🖥 打开操作台", f"[点这里打开操作台]({console.url()})\n只能在本机打开；有新的要处理会弹桌面通知，处理后提醒群和页面同步。")
+            notify("🖥 打开操作台", f"[点这里打开操作台]({console.url()})\n" + ("内网其他电脑也能打开（链接带密钥，别外传）" if console.lan() else "只能在本机打开；有新的要处理会弹桌面通知") + "，处理后提醒群和页面同步。")
     except Exception as ex:
         log("操作台没开起来", repr(ex)[:200])
     threading.Thread(target=morning_report, daemon=True).start()
@@ -2384,6 +2419,8 @@ loginctl enable-linger $USER    # 可选：不登录桌面也运行（需要管�
 
 助手启动时自动开：只监听本机 `127.0.0.1:8765`（`console_port` 可改），链接带密钥。三列「要你判断 / 草稿待发 / 已处理」，点卡片看原会话、改草稿、问 AI、发送；页面上的操作和提醒群指令走同一条路，三处同步。有新的要处理时自动用浏览器弹出操作台（60 秒内最多一次；提醒群「弹出 关」关掉），并弹桌面通知。
 
+**在别的电脑上看（比如助手装在 Mac，人在 Windows 上看）**：`config.json` 加 `"console_host": "0.0.0.0"`，重启助手后提醒群发来的「打开操作台」链接就是本机内网地址（如 `http://192.168.x.x:8765/?k=…`），同一内网的电脑都能打开，靠链接里的密钥挡住别人（别外传）；地址认错了可以用 `console_url_host` 指定 IP。这种用法下桌面通知在浏览器里弹不出来（浏览器只给本机或 https 页面弹），自动弹出也会弹在助手那台电脑上，建议加 `"popup": false`，靠提醒群机器人和标签页件数提醒。
+
 ```python
 """本机操作台（v3.0）：助手在本机起一个网页，三列看「要你判断 / 草稿待发 / 已处理」，在页面上直接处理。
 - 只监听 127.0.0.1，链接带密钥（~/.qa-agent/console_token，只本人可读），同局域网别人打不开。
@@ -2403,7 +2440,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 A = {}                     # agent.py 的全局变量（start 时传进来）
 TOKEN = ""
-CLOSED_N = 200             # 「已处理」列保留最近多少条
+CLOSED_N = 20              # 「已处理」列只显示最近 20 条（11-19 梦无矶：3 天内为主，但始终保证 20 条）
 POP = {"t": 0}             # 上次把操作台弹到前面的时间
 
 
@@ -2632,8 +2669,22 @@ class H(BaseHTTPRequestHandler):
         self._send(200, json.dumps({"msg": "已处理" if msg == "ok" else msg}, ensure_ascii=False))
 
 
+def _lan_ip():
+    import socket
+    try:
+        x = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); x.connect(("223.5.5.5", 80)); ip = x.getsockname()[0]; x.close(); return ip
+    except OSError:
+        return "127.0.0.1"
+
+
+def lan():
+    """console_host 设成 0.0.0.0（或本机内网 IP）= 允许内网其他电脑打开（比如助手装在 Mac、人在 Windows 上看）。"""
+    return (A["CFG"].get("console_host") or "127.0.0.1") not in ("127.0.0.1", "localhost")
+
+
 def url():
-    return f"http://127.0.0.1:{int(A['CFG'].get('console_port') or 8765)}/?k={TOKEN}"
+    host = A["CFG"].get("console_url_host") or (_lan_ip() if lan() else "127.0.0.1")
+    return f"http://{host}:{int(A['CFG'].get('console_port') or 8765)}/?k={TOKEN}"
 
 
 def start(ns):
@@ -2699,8 +2750,8 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1f
 .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .empty{color:var(--faint);text-align:center;padding:48px 10px}.empty .big{font-size:30px;display:block;margin-bottom:6px}
 .mask{position:fixed;inset:0;background:rgba(10,18,35,.25);opacity:0;pointer-events:none;transition:.2s;z-index:9}.mask.on{opacity:1;pointer-events:auto}
-aside{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--surface);box-shadow:-12px 0 40px rgba(10,20,45,.18);transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:10}
-aside.on{transform:none}.ph{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}.ph .t{font-weight:700}.ph .s{color:var(--muted);font-size:12.5px}
+aside{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--surface);box-shadow:none;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:10}
+aside.on{transform:none;box-shadow:-12px 0 40px rgba(10,20,45,.18)}.ph{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}.ph .t{font-weight:700}.ph .s{color:var(--muted);font-size:12.5px}
 .pb{flex:1;overflow:auto;padding:16px 20px;background:var(--soft)}.pf{border-top:1px solid var(--border);padding:14px 20px;background:var(--surface)}
 .bub{display:flex;gap:10px;margin-bottom:14px}.bub .av{width:28px;height:28px;font-size:12px}.bub .b{background:var(--surface);border:1px solid var(--border);border-radius:4px 12px 12px 12px;padding:8px 12px;max-width:100%}
 .bub .w{font-size:12px;color:var(--muted);margin-bottom:2px}.bub .w span{color:var(--faint);margin-left:6px}.bub .tx{white-space:pre-wrap;word-break:break-word}

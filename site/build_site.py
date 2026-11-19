@@ -36,10 +36,15 @@ page = open(os.path.join(HERE, "template.html"), encoding="utf-8").read()
 for k, v in {"{{VER}}": html.escape(ver), "{{VER_SHORT}}": html.escape(ver.split()[0]), "{{DOC0}}": html.escape(DOCS[0][0]),
              "{{CHANGELOG}}": cl, "{{DOWNLOADS}}": "".join(cards)}.items():
     page = page.replace(k, v)
+import hashlib   # 静态文件按内容取短哈希当 ?v=，内容一变浏览器就重新取（11-19：版本号不变时用户看到的是旧缓存）
+def _h(name):
+    return hashlib.md5(open(os.path.join(OUT, "assets", name), "rb").read()).hexdigest()[:8]
+for _n in ("guide.css", "console.jpg", "console-panel.jpg"):
+    page = re.sub(r"assets/" + re.escape(_n) + r"\?v=[^\"']*", f"assets/{_n}?v={_h(_n)}", page)
 open(os.path.join(OUT, "index.html"), "w", encoding="utf-8").write(page)
 open(os.path.join(OUT, "view.html"), "w", encoding="utf-8").write(f"""<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>群消息助手 · 文档</title><script>try{{var t=localStorage.getItem('qa-theme');if(t&&t!=='auto')document.documentElement.dataset.theme=t}}catch(e){{}}</script>
-<link rel="stylesheet" href="assets/guide.css?v={html.escape(ver.split()[0])}"><style>#c{{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px 32px;margin-top:20px;overflow-x:auto}}#c pre{{background:var(--surface-soft);padding:14px;border-radius:8px;overflow-x:auto;font-size:13px}}#c table{{border-collapse:collapse;display:block;overflow-x:auto}}#c td,#c th{{border:1px solid var(--border);padding:6px 10px}}#c h1,#c h2,#c h3{{margin:1.2em 0 .5em}}#c p{{margin:.6em 0}}</style>
+<link rel="stylesheet" href="assets/guide.css?v={_h('guide.css')}"><style>#c{{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px 32px;margin-top:20px;overflow-x:auto}}#c pre{{background:var(--surface-soft);padding:14px;border-radius:8px;overflow-x:auto;font-size:13px}}#c table{{border-collapse:collapse;display:block;overflow-x:auto}}#c td,#c th{{border:1px solid var(--border);padding:6px 10px}}#c h1,#c h2,#c h3{{margin:1.2em 0 .5em}}#c p{{margin:.6em 0}}</style>
 <script src="assets/marked.min.js"></script></head><body>
 <header class="site-header"><div class="header-inner"><a class="brand" href="./"><span class="logo">群</span>群消息助手</a><nav class="header-nav"><a href="./">← 返回指南</a></nav><span id="mdtools" style="display:none;gap:10px;align-items:center;font-size:13.5px"><button class="link-button" id="cp">⧉ 复制页面</button><a id="raw"></a></span><a class="button ghost" id="dl" download>下载原文件</a></div></header>
 <div class="toast" id="toast">已复制</div>

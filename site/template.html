@@ -83,19 +83,26 @@
   <div class="guide-layout">
     <div>
       <div class="step-card" id="s1"><div class="step-heading"><span class="no">01</span><h3>下载部署文档</h3></div>
-        <p>一份 Markdown 文件，里面有给 AI 助手的完整指令、代码和工作手册，不用另外下载程序。</p>
+        <ul class="pts"><li>就是<b>一份 Markdown 文件</b>：给 AI 助手的完整指令、代码和工作手册都在里面</li><li><mark>不用另外下载程序</mark></li></ul>
         <div class="hero-actions" style="margin-top:14px"><a class="button primary" href="files/doc0.md" download="{{DOC0}}">下载部署文档</a><button class="button ghost" data-copy-doc>复制部署文档</button><a class="button ghost" href="view.html?f=doc0.md&n={{DOC0}}">在线看全文</a></div>
-        <p style="font-size:13px">不想下载文件？点「复制部署文档」，直接粘贴给你的 AI 助手也行；要看原文点 <a href="view.html?f=doc0.md&n={{DOC0}}&raw=1">以 Markdown 格式查看</a>。</p></div>
+        <ul class="pts sub"><li>不想下载文件：点「<b>复制部署文档</b>」，直接粘贴给你的 AI 助手</li><li>想看原文：<a href="view.html?f=doc0.md&n={{DOC0}}&raw=1">以 Markdown 格式查看</a></li></ul></div>
       <div class="step-card" id="s2"><div class="step-heading"><span class="no">02</span><h3>拖进你的 AI 助手，发「部署」</h3></div>
-        <p>AI 助手按文档从第 0 步开始：查环境 → 给你看风险 → 认出你是谁 → 一步一步问你选项（回数字就行）。</p>
+        <ul class="pts flow"><li>查环境</li><li>给你看风险</li><li>认出你是谁</li><li>一步步问你选项（<mark>回数字就行</mark>）</li></ul>
         <div class="cmd"><code>部署</code><button class="copy-button" data-copy="部署">复制</button></div></div>
       <div class="step-card" id="s3"><div class="step-heading"><span class="no">03</span><h3>确认角色、职责范围和回复规则</h3></div>
-        <p>有协作库就按协作库认出你的角色和职责；没有就从<b>角色职责库</b>选（产品、Android、iOS、H5、网页版、服务端、剧中台、推荐、测试、运营、后台 UI、项目负责人，可多选）。每个角色的职责会念给你，你修改、补充，最后二次确认才生效。</p>
-        <div class="callout">助手不会在群里自动回复任何消息：所有回复都由你确认后才发，超过 2 小时没处理会再提醒你。</div></div>
-      <div class="step-card" id="s4"><div class="step-heading"><span class="no">04</span><h3>提醒群自动建好，你只加一个机器人</h3></div>
-        <p>AI 助手运行 <code>setup-notify</code>，用钉钉 CLI 自动建好只有你自己的提醒群，并在群里发一条加机器人的步骤。钉钉不允许程序代建机器人，这一步要你点一下（约 1 分钟）：群设置 → 机器人 → 自定义 → 勾「加签」。把 Webhook 地址和 SEC 密钥直接发在群里，助手自动写进配置、发一条自检，不用改任何文件。</p></div>
+        <ul class="pts"><li><b>有协作库</b>：按协作库认出你的角色和职责</li>
+        <li><b>没有协作库</b>：从<span class="key">角色职责库</span>选，可多选——产品、Android、iOS、H5、网页版、服务端、剧中台、推荐、测试、运营、后台 UI、项目负责人</li>
+        <li>每个角色的职责会念给你，你可以改、可以补，<mark>二次确认后才生效</mark></li></ul>
+        <div class="callout">助手<b>不会在群里自动回复任何消息</b>：所有回复都由你确认后才发；超过 <b>2 小时</b>没处理会再提醒你。</div></div>
+      <div class="step-card" id="s4"><div class="step-heading"><span class="no">04</span><h3>提醒群：有就直接用，没有自动建</h3></div>
+        <ul class="pts"><li><span class="tag-ok">已经有</span>提醒群和机器人：把群名、Webhook 地址、SEC 密钥告诉 AI 助手，<mark>直接绑定，不新建</mark></li>
+        <li><span class="tag-new">还没有</span>AI 助手运行 <code>setup-notify</code>，用钉钉 CLI <b>自动建好</b>只有你自己的提醒群</li>
+        <li>机器人要<b>你点一下</b>（钉钉不允许程序代建，约 1 分钟）：<span class="key">群设置 → 机器人 → 自定义 → 勾「加签」</span></li>
+        <li>把 Webhook 地址和 SEC 密钥<b>直接发在群里</b>，助手自动写进配置、发一条自检，<mark>不用改任何文件</mark></li></ul></div>
       <div class="step-card" id="s5"><div class="step-heading"><span class="no">05</span><h3>自检，看到版本号就好了</h3></div>
-        <p>最后 AI 助手会跑一次自检，并下载内置表情包索引，再按你的系统设好每天 09:00 和登录时自动启动（Windows 计划任务 / macOS LaunchAgent / Linux systemd）。提醒群收到一条「助手自检」就说明机器人通了。</p>
+        <ul class="pts"><li>AI 助手跑一次自检，并下载内置表情包索引</li>
+        <li>设好<b>每天 09:00 和登录时自动启动</b>（Windows 计划任务 / macOS LaunchAgent / Linux systemd）</li>
+        <li>提醒群收到「<b>助手自检</b>」= 机器人通了；再收到「<b>打开操作台</b>」链接 = <mark>全部装好</mark></li></ul>
         <div class="cmd"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py check">复制</button></div></div>
     </div>
     <aside class="progress-card" aria-label="上手进度"><h3>上手进度 <span id="pc">0 / 5</span></h3><div class="bar"><i id="pb"></i></div>

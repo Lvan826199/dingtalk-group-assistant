@@ -118,3 +118,21 @@ def test_status_not_spammed_to_notify_group_but_problems_are(make_agent):
     assert not notes                                                          # v3.0：例行状态不发提醒群
     a.status_event("监听异常", "测试群 断开", announce=True)
     assert notes and "监听异常" in notes[-1][0]
+
+
+def test_setup_notify_binds_existing_group_and_robot_without_creating(make_agent):
+    a, notes, calls = make_agent({"notify_group": ""})
+    a.CFG["notify_group"] = ""
+    a.run = lambda args, **k: calls.append(args) or R(0, '{"items": [{"openConversationId": "cidOLD"}]}')
+    hook = "https://oapi.dingtalk.com/robot/send?access_token=" + "c3" * 32
+    assert a.setup_notify(group="我的提醒群", webhook=hook, secret="SEC" + "d4" * 32)
+    assert a.CFG["notify_group"] == "cidOLD" and a.CFG["webhook"] == hook
+    assert not any("+chat-create" in c for c in calls)                       # 没建新群
+    assert notes and "自检" in notes[-1][0]
+
+
+def test_console_lan_mode_link_uses_lan_address(make_agent):
+    a, console, *_ = _boot(make_agent)
+    assert console.url().startswith("http://127.0.0.1:")
+    a.CFG["console_host"] = "0.0.0.0"; a.CFG["console_url_host"] = "192.168.9.9"
+    assert console.lan() and console.url().startswith("http://192.168.9.9:")
