@@ -44,7 +44,8 @@ def _token():
 
 def _closed_log(no, why, x):
     rec = {"no": no, "why": why, "who": x.get("who"), "what": x.get("what"), "kind": x.get("kind"), "at": x.get("at"),
-           "done": time.strftime("%m-%d %H:%M"), "ts": time.time(), "cid": x.get("cid")}
+           "done": time.strftime("%m-%d %H:%M"), "ts": time.time(), "cid": x.get("cid"),
+           "event": x.get("event"), "reason": x.get("reason", ""), "qa": x.get("qa", [])}       # 点开「已处理」看详情用
     with A["LOCK"], open(_p("logs", "closed.jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -169,9 +170,9 @@ def state():
             "today_done": sum(1 for x in done if x.get("done", "").startswith(time.strftime("%m-%d"))), "time": time.strftime("%H:%M:%S")}
 
 
-def thread(no):
+def thread(no, x=None):
     """会话面板：这件事所在会话最近 20 条消息（群用 dws 拉；私聊只显示原消息）。"""
-    x = A["_open_load"]().get(no) or {}
+    x = x or A["_open_load"]().get(no) or {}
     cid = x.get("cid")
     if not cid or cid not in _groups():
         ev = x.get("event") or {}
@@ -209,6 +210,37 @@ def history(cid):
     except (ValueError, AttributeError):
         return [{"who": "（读取失败）", "time": "", "text": str(getattr(r, "stderr", "") or "")[:200]}]
     return sorted(({"who": m.get("sender"), "time": m.get("createTime", ""), "text": str(m.get("content") or m.get("text") or "")} for m in msgs), key=lambda m: m["time"])
+
+
+def done_detail(no):
+    """点开「已处理」：只读详情——原会话、AI 依据、问过 AI 的、最后结果（发出的原文、确认时间和方式）。"""
+    rec = None
+    path = _p("logs", "closed.jsonl")
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("no") == no:
+                rec = r
+    if not rec:
+        return {}
+    audit = {}
+    if os.path.exists(A["AUDIT"]):
+        for line in open(A["AUDIT"], encoding="utf-8"):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("编号") == no:
+                audit = r
+    return {"no": no, "who": rec.get("who"), "group": _groups().get(rec.get("cid"), "私聊" if rec.get("cid") else ""), "at": rec.get("at"),
+            "done": rec.get("done"), "why": rec.get("why"), "reason": rec.get("reason") or audit.get("AI 依据", ""),
+            "qa": rec.get("qa") or audit.get("确认前问过 AI", []), "text": str((rec.get("event") or {}).get("content") or rec.get("what") or ""),
+            "sent": audit.get("发出内容", ""), "sent_at": audit.get("发出时间", ""), "confirm": ("改过草稿后确认发送" if "改成" in audit.get("确认方式", "") else "命令行确认发送" if "命令行" in audit.get("确认方式", "")
+                        else "直接确认发送" if audit else "") + (f"（{audit.get('确认人')}）" if audit.get("确认人") else ""),
+            "thread": thread(no, {"cid": rec.get("cid"), "event": rec.get("event") or {"sender": rec.get("who"), "content": rec.get("what")}})}
 
 
 def act(no, action, text=""):
@@ -259,6 +291,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, json.dumps([{"cid": c, "name": ding_name(c, n)} for c, n in _groups().items()], ensure_ascii=False))
         if u.path == "/api/history":
             return self._send(200, json.dumps(history((urllib.parse.parse_qs(u.query).get("cid") or [""])[0]), ensure_ascii=False))
+        if u.path == "/api/done":
+            return self._send(200, json.dumps(done_detail((urllib.parse.parse_qs(u.query).get("no") or [""])[0]), ensure_ascii=False))
         if u.path == "/api/thread":
             no = (urllib.parse.parse_qs(u.query).get("no") or [""])[0]
             return self._send(200, json.dumps(thread(no), ensure_ascii=False))
@@ -408,7 +442,7 @@ $('stat').innerHTML=`<span class="chip duty d-${s.duty}" style="cursor:pointer" 
 $('judge').innerHTML=s.judge.map(c=>card(c,'judge')).join('')||empty('没有要你判断的事');$('send').innerHTML=s.send.map(c=>card(c,'send')).join('')||empty('没有待发的草稿');
 const dl=s.done.filter(d=>dfilter==='all'||d.result==='已发送');
 $('done').innerHTML=`<div class="dtabs"><button class="btn sm${dfilter==='all'?' p':''}" onclick="dfilter='all';render()">全部 ${s.done.length}</button><button class="btn sm${dfilter==='sent'?' p':''}" onclick="dfilter='sent';render()">已发送 ${s.done.filter(d=>d.result==='已发送').length}</button></div>`+
-(dl.map(d=>`<div class="card">${head({who:d.who,group:'',no:d.no,at:d.done})}<div class="txt">${esc(d.what)}</div>${d.sent?`<div class="draft sent">${esc(d.sent)}</div>`:''}<div class="why" style="--x:0"><span class="tag ${d.result==='已发送'?'t-ok':'t-gray'}">${d.result}</span> ${d.sent?'':esc(d.why)}</div></div>`).join('')||empty(dfilter==='sent'?'还没有发出去的消息':'今天还没有处理记录'));
+(dl.map(d=>`<div class="card" style="cursor:pointer" onclick="openD('${d.no}')">${head({who:d.who,group:'',no:d.no,at:d.done})}<div class="txt">${esc(d.what)}</div>${d.sent?`<div class="draft sent">${esc(d.sent)}</div>`:''}<div class="why" style="--x:0"><span class="tag ${d.result==='已发送'?'t-ok':'t-gray'}">${d.result}</span> ${d.sent?'':esc(d.why)}</div></div>`).join('')||empty(dfilter==='sent'?'还没有发出去的消息':'今天还没有处理记录'));
 $('n1').textContent=s.judge.length;$('n2').textContent=s.send.length;$('n3').textContent=s.done.length;
 const open=[...s.judge,...s.send],n=open.length;document.title=(n?'('+n+') ':'')+'群消息助手 · 操作台';const now=new Set(open.map(c=>c.no));
 open.forEach(c=>{if(!seen.has(c.no)&&!first&&window.Notification&&Notification.permission==='granted'){const x=new Notification(`${c.draft?'草稿待发':'要你判断'} · ${c.who}`,{body:c.text.slice(0,90),tag:c.no});x.onclick=()=>{window.focus();openP(c.no)};notes[c.no]=x}});
@@ -426,6 +460,13 @@ f.innerHTML=`<div class="lbl">${c.draft?'草稿（可以直接改）':'你的回
 <div class="btns">${c.can_send?`<button class="btn p" onclick="go('${c.no}','${c.draft?'edit_send':'reply_new'}',$('ta').value)">发送到原会话</button>`:'<span class="where">这个群设成了「只看」，请在钉钉里自己回</span>'}
 <button class="btn" onclick="go('${c.no}','stash',$('ta').value)">暂存不发</button>${c.draft?`<button class="btn d" onclick="go('${c.no}','drop')">不发</button>`:`<button class="btn" onclick="go('${c.no}','not_mine')">不归我</button>`}</div>
 <div class="askrow"><input class="q" id="q" placeholder="问 AI：依据是什么？帮我改得客气点…" onkeydown="if(event.key==='Enter')go('${c.no}','ask',this.value)"><button class="btn" onclick="go('${c.no}','ask',$('q').value)">问 AI</button></div>`;if(ask)setTimeout(()=>$('q').focus(),60)}
+// 点开「已处理」：只读详情
+async function openD(no){sel=null;const d=await api('/api/done?no='+encodeURIComponent(no));if(!d.no)return toast('没找到这条记录');
+$('pav').outerHTML=av(d.who).replace('class="av"','class="av" id="pav"');$('ptitle').textContent=d.who||'';$('psub').textContent=`${d.group||''} · ${no} · 收到 ${d.at||''} · 处理 ${d.done||''}`;
+$('panel').classList.add('on');$('mask').classList.add('on');
+$('pbody').innerHTML=(d.thread||[]).map(m=>`<div class="bub${m.text&&d.text&&d.text.startsWith(m.text.slice(0,30))?' hl':''}">${av(m.who)}<div class="b"><div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx">${esc(m.text)}</div></div></div>`).join('')+
+(d.reason?`<div class="note"><h4>AI 的判断依据</h4>${esc(d.reason)}</div>`:'')+((d.qa||[]).length?`<div class="note"><h4>问过 AI</h4>${d.qa.map(q=>`<div class="qa"><b>问</b> ${esc(q['问'])}<br><b>答</b> ${esc(q['答'])}</div>`).join('')}</div>`:'');$('pbody').scrollTop=1e9;
+$('pfoot').innerHTML=d.sent?`<div class="lbl">已发出 · ${esc(d.sent_at)}</div><div class="draft sent">${esc(d.sent)}</div><div class="where" style="margin-top:8px">确认方式：${esc(d.confirm)}</div>`:`<div class="lbl">结果</div><div class="where">${esc(d.why)}</div>`}
 // 顶栏「值守中」点开：按群看最近消息（复用右侧面板）
 let hsel=null;async function openH(cid){sel=null;const gs=await api('/api/groups');if(!gs.length)return toast('没有监听的群');hsel=cid||hsel||gs[0].cid;
 $('pav').outerHTML='<span class="av" id="pav" style="background:var(--green)">群</span>';$('ptitle').textContent='最近消息';$('psub').textContent='按群看，每个群最近 30 条';

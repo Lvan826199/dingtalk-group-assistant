@@ -54,6 +54,8 @@ def test_console_send_goes_through_command_and_syncs(make_agent):
     assert n1 not in [c["no"] for c in s["send"]] and s["done"][0]["no"] == n1    # 页面：移到「已处理」
     assert os.path.exists(a.AUDIT)                                               # 留痕
     d = console.state()["done"][0]; assert d["result"] == "已发送" and "765 已补测通过" in d["sent"]   # 「已处理」里看得到发出的内容
+    det = json.loads(_get(console, "/api/done?no=" + n1.replace("#", "%23")).read())
+    assert det["sent"].endswith("765 已补测通过") and "改过草稿" in det["confirm"] and det["text"].startswith("@本人 765")   # 点开看详情
 
 
 def test_console_not_mine_and_reply_new(make_agent):
