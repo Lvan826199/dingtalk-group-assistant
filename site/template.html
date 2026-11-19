@@ -2,7 +2,7 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>群消息助手 · 新手指南</title>
 <script>try{var t=localStorage.getItem('qa-theme');if(t&&t!=='auto')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="assets/guide.css"><script src="assets/marked.min.js"></script></head>
+<link rel="stylesheet" href="assets/guide.css?v={{VER_SHORT}}"><script src="assets/marked.min.js"></script></head>
 <body>
 <header class="site-header"><div class="header-inner">
   <a class="brand" href="#top"><span class="logo">群</span>群消息助手</a>
@@ -59,7 +59,7 @@
 
 <section class="block" id="console">
   <div class="section-heading"><div class="section-kicker">3.0 新增 · 操作台</div><h2>一屏看完，点一下就处理</h2><p>助手在你电脑上开一个只有你能打开的网页。提醒群里发来的每件事，在这里分三列摆好；点开就能看原会话、改草稿、问 AI、发出去。</p></div>
-  <div class="shot"><img src="assets/console.jpg" alt="操作台：要你判断 / 草稿待发 / 已处理 三列" loading="lazy"></div>
+  <div class="shot"><img src="assets/console.jpg?v={{VER_SHORT}}" alt="操作台：要你判断 / 草稿待发 / 已处理 三列" loading="lazy"></div>
   <div class="feature-grid">
     <div class="feature"><h3>三列不重复</h3><p><b>要你判断</b>：AI 拿不准、没写草稿的；<b>草稿待发</b>：AI 写好了等你点头；<b>已处理</b>：处理完的。每件事只在一列，各列单独滚动。</p></div>
     <div class="feature"><h3>在页面里处理会话</h3><p>点卡片从右边滑出原会话最近 20 条、AI 依据和问答；改草稿、问 AI、发送、暂存、不发、不归我，发出前再确认一次，全部留痕。</p></div>
@@ -68,7 +68,7 @@
     <div class="feature"><h3>值守状态一眼看到</h3><p>顶栏绿点：值守中 / 部分监听断开 / 没在监听。提醒群不再刷「收到消息、心跳」，出问题才提醒。</p></div>
     <div class="feature"><h3>只你能打开</h3><p>只在本机 127.0.0.1 开，链接带密钥；同事拿到链接也打不开。提醒群问「有什么待办」会附上链接。</p></div>
   </div>
-  <div class="shot"><img src="assets/console-panel.jpg" alt="会话面板：看原会话、改草稿、问 AI、发送" loading="lazy"></div>
+  <div class="shot"><img src="assets/console-panel.jpg?v={{VER_SHORT}}" alt="会话面板：看原会话、改草稿、问 AI、发送" loading="lazy"></div>
 </section>
 
 <section class="block" id="start">
@@ -92,15 +92,15 @@
       <div class="step-card" id="s3"><div class="step-heading"><span class="no">03</span><h3>确认角色、职责范围和回复规则</h3></div>
         <p>有协作库就按协作库认出你的角色和职责；没有就从<b>角色职责库</b>选（产品、Android、iOS、H5、网页版、服务端、剧中台、推荐、测试、运营、后台 UI、项目负责人，可多选）。每个角色的职责会念给你，你修改、补充，最后二次确认才生效。</p>
         <div class="callout">助手不会在群里自动回复任何消息：所有回复都由你确认后才发，超过 2 小时没处理会再提醒你。</div></div>
-      <div class="step-card" id="s4"><div class="step-heading"><span class="no">04</span><h3>建你自己的提醒群机器人</h3></div>
-        <p>建一个只有你自己的钉钉群，加自定义机器人（加签）。所有提醒、草稿、每日汇报都发到这里，有推送、有历史。</p></div>
+      <div class="step-card" id="s4"><div class="step-heading"><span class="no">04</span><h3>提醒群自动建好，你只加一个机器人</h3></div>
+        <p>AI 助手运行 <code>setup-notify</code>，用钉钉 CLI 自动建好只有你自己的提醒群，并在群里发一条加机器人的步骤。钉钉不允许程序代建机器人，这一步要你点一下（约 1 分钟）：群设置 → 机器人 → 自定义 → 勾「加签」。把 Webhook 地址和 SEC 密钥直接发在群里，助手自动写进配置、发一条自检，不用改任何文件。</p></div>
       <div class="step-card" id="s5"><div class="step-heading"><span class="no">05</span><h3>自检，看到版本号就好了</h3></div>
         <p>最后 AI 助手会跑一次自检，并下载内置表情包索引，再按你的系统设好每天 09:00 和登录时自动启动（Windows 计划任务 / macOS LaunchAgent / Linux systemd）。提醒群收到一条「助手自检」就说明机器人通了。</p>
         <div class="cmd"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py check">复制</button></div></div>
     </div>
     <aside class="progress-card" aria-label="上手进度"><h3>上手进度 <span id="pc">0 / 5</span></h3><div class="bar"><i id="pb"></i></div>
       <label><input type="checkbox" data-s="1">下载部署文档</label><label><input type="checkbox" data-s="2">拖进 AI 助手发「部署」</label>
-      <label><input type="checkbox" data-s="3">确认职责范围</label><label><input type="checkbox" data-s="4">建提醒群机器人</label><label><input type="checkbox" data-s="5">自检通过</label>
+      <label><input type="checkbox" data-s="3">确认职责范围</label><label><input type="checkbox" data-s="4">提醒群加机器人</label><label><input type="checkbox" data-s="5">自检通过</label>
       <button class="reset" id="reset">重置进度</button></aside>
   </div>
 </section>
