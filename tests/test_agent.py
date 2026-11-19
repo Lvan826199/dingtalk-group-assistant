@@ -110,7 +110,7 @@ def test_confirm_sends_and_audits(make_agent):
 
 
 def test_ask_ai_then_confirm(make_agent):
-    stub = [sys.executable, "-c", "import sys,json; sys.stdin.read(); print(json.dumps({'answer':'依据是 16:17 的发布通知','new_draft':'您好，测试服现在是 97f79eb'}, ensure_ascii=False))"]
+    stub = [sys.executable, "-c", "import sys,json; sys.stdin.read(); print(json.dumps({'answer':'依据是 16:17 的发布通知','new_draft':'您好，测试服现在是 97f79eb'}))"]
     a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "ai_cmd": stub, "ai_prompt": "stdin"})
     mixed_run(a, calls)
     a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "97f79eb"}
@@ -124,7 +124,7 @@ def test_ask_ai_then_confirm(make_agent):
 
 
 def test_ask_ai_on_escalated_item(make_agent):
-    stub = [sys.executable, "-c", "import sys,json; sys.stdin.read(); print(json.dumps({'answer':'这是派活，建议你自己回','new_draft':''}, ensure_ascii=False))"]
+    stub = [sys.executable, "-c", "import sys,json; sys.stdin.read(); print(json.dumps({'answer':'这是派活，建议你自己回','new_draft':''}))"]
     a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "ai_cmd": stub, "ai_prompt": "stdin"})
     mixed_run(a, calls)
     a.decide = lambda b: {"action": "escalate", "mine": True, "reason": "派活"}
