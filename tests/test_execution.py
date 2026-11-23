@@ -45,7 +45,7 @@ def test_owner_command_executes_real_process_once_and_keeps_log(make_agent,tmp_p
     finished = a.execution_snapshot()[0]
     assert finished['status'] == 'completed'
     assert finished['execution_run']['total'] == finished['execution_run']['passed'] == 2
-    assert 'ACTUAL_TEST_EXECUTED' in Path(finished['execution_run']['log']).read_text()
+    assert 'ACTUAL_TEST_EXECUTED' in Path(finished['execution_run']['log']).read_text(encoding="utf-8")
     assert any('实际开始' in t for t,_ in notes) and any('已通过' in t for t,_ in notes)
     a.command(request())  # 同一原消息重放不再执行。
     assert not a.run_execution(rec['task_key'])

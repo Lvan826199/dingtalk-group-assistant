@@ -55,7 +55,7 @@ def test_bot_delivery_failure_is_visible_as_failed(make_agent):
     a.ai_exec = lambda *args, **kwargs: '{"answer":"核查完成，仍缺数据。"}'
     a.notify = lambda *args: False
     assert a.process_owner_command(event("delivery")) == "failed"
-    row = json.loads((Path(a.HOME) / "logs/user-dialogue.jsonl").read_text().splitlines()[-1])
+    row = json.loads((Path(a.HOME) / "logs/user-dialogue.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert row["delivered"] is False
 
 

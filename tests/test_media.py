@@ -82,7 +82,7 @@ def test_background_result_updates_one_draft_without_sending(make_agent):
     no = a.stage_draft(e, "第一次核查", "初步证据")
     assert a.stage_draft(e, "13项canCreate=false", "真实接口结果") == no
     files = list(Path(a.HOME, "drafts").glob("*.json"))
-    assert len(files) == 1 and json.loads(files[0].read_text())["draft"] == "13项canCreate=false"
+    assert len(files) == 1 and json.loads(files[0].read_text(encoding="utf-8"))["draft"] == "13项canCreate=false"
     assert len(a._open_load()) == 1 and not calls
     assert "草稿待你确认" in notes[-1][0]
 

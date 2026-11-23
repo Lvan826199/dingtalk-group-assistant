@@ -402,7 +402,7 @@ def test_dsh_preset_reads_task_from_stdin(make_agent):
 def test_ai_fallback_to_other_installed(make_agent, tmp_path, monkeypatch):
     bin_ = tmp_path / "bin"; bin_.mkdir()
     s = bin_ / "claude"
-    s.write_text('#!/bin/sh\ncat >/dev/null\necho \'{"action":"ignore","reason":"备用 AI"}\'\n'); s.chmod(0o755)
+    s.write_text('#!/bin/sh\ncat >/dev/null\necho \'{"action":"ignore","reason":"备用 AI"}\'\n', encoding="utf-8"); s.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_}{os.pathsep}/usr/bin{os.pathsep}/bin")
     a, notes, _ = make_agent({"ai": "qoder"}, fake_run=False)            # 指定的 qoder 没装
     d = a.decide([msg("hi")])

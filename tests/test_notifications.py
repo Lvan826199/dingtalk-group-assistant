@@ -34,9 +34,9 @@ def test_notification_bridge_visible_without_closing_business_task(make_agent):
 def test_offline_outbox_imports_once_without_resending(make_agent):
     a, c, _, calls, *_ = _boot(make_agent)
     root = Path.home() / '.qa-agent'
-    config = json.loads((root / 'config.json').read_text())
+    config = json.loads((root / 'config.json').read_text(encoding="utf-8"))
     config['console_port'] = 0
-    (root / 'config.json').write_text(json.dumps(config))
+    (root / 'config.json').write_text(json.dumps(config), encoding="utf-8")
     # 缺少授权文件模拟操作台不可用，不尝试对外联网。
     (root / 'console_token').unlink()
     assert c.mirror_notification(payload(delivered=False)) is False

@@ -41,7 +41,7 @@ def test_slow_owner_check_does_not_block_receive_and_keeps_order(make_agent, mon
         reader.join(1)
         assert not second_done.is_set(), "发送/改稿指令不能越过前面的核查"
         # 原文已保留，即使当前还未轮到执行也不应丢失。
-        rows = [json.loads(x) for x in (Path(a.HOME) / "inbox.jsonl").read_text().splitlines()]
+        rows = [json.loads(x) for x in (Path(a.HOME) / "inbox.jsonl").read_text(encoding="utf-8").splitlines()]
         assert [x["message_id"] for x in rows] == ["first", "second"]
         assert "排队 1" in a.status_snapshot()
         limit = time.monotonic() + 1
@@ -88,7 +88,7 @@ def test_owner_duplicate_is_only_enqueued_once(make_agent, monkeypatch):
         a.relevant(event("same"))
         assert done.wait(2)
         assert count == ["same"]
-        rows = (Path(a.HOME) / "inbox.jsonl").read_text().splitlines()
+        rows = (Path(a.HOME) / "inbox.jsonl").read_text(encoding="utf-8").splitlines()
         assert len(rows) == 1
     finally:
         stop(a)

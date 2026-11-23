@@ -53,7 +53,7 @@ def test_merged_batch_has_completion_for_every_message(make_agent):
     window = iter([True, False])
     a.in_window = lambda: next(window)
     a.worker()
-    rows = [json.loads(x) for x in Path(a.STATUS_LOG).read_text().splitlines()]
+    rows = [json.loads(x) for x in Path(a.STATUS_LOG).read_text(encoding="utf-8").splitlines()]
     assert {r['message_id'] for r in rows if r['stage'] == '处理完成'} == {'msgA', 'msgB'}
 
 

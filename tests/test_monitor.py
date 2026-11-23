@@ -41,14 +41,14 @@ def test_invalid_settings_are_atomic(make_agent,body):
 
 def test_save_preserves_personal_settings_and_default_rules(make_agent):
     a,_,_=make_agent({'roles':['qa'],'custom_personal':{'keep':True},'groups':{'cidG':'已有群'}})
-    draft=Path(a.HOME,'drafts','keep.json');draft.write_text('{"draft":"保留草稿"}')
+    draft=Path(a.HOME,'drafts','keep.json');draft.write_text('{"draft":"保留草稿"}', encoding="utf-8")
     a.save_monitor_settings({'group':{'cid':'cidNew','name':'伪造名','rule':''}}, {'cid':'cidNew','name':'真实群'})
     s=a.save_monitor_settings({'window':['08:30','23:40'],'all_day':False,'roles':['attacker']})
-    cfg=json.loads(Path(a.CFG_PATH).read_text())
+    cfg=json.loads(Path(a.CFG_PATH).read_text(encoding="utf-8"))
     assert cfg['groups']=={'cidG':'已有群','cidNew':'真实群'}
     assert cfg['roles']==['qa'] and cfg['custom_personal']=={'keep':True}
     assert s['window']==['08:30','23:40'] and cfg['group_rules']['cidNew']==''
-    assert draft.read_text()=='{"draft":"保留草稿"}'
+    assert draft.read_text(encoding="utf-8")=='{"draft":"保留草稿"}'
     assert not any(k in s for k in ('webhook','secret','custom_personal'))
     a.save_monitor_settings({'group':{'cid':'cidNew','rule':'  关注发布  ','readonly':True,'paused':True}})
     assert 'cidNew' not in a.CFG['groups'] and a.CFG['readonly_groups']['cidNew']=='真实群'
