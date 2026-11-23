@@ -270,3 +270,11 @@ def test_handled_elsewhere_skips_ai_answer(make_agent, monkeypatch):
     monkeypatch.setattr(a, "ai_exec", lambda *x, **k: asked.append(x) or '{"answer":"未执行"}')
     a.answer_user({"sender": "本人", "content": "批准发布3.2", "conversation_id": "cidN", "message_id": "msgAPPROVE1"}, "批准发布3.2")
     assert asked == [] and not any("AI 的回答" in t or "未执行" in x for t, x in notes)
+
+
+def test_reply_before_item_exists_still_blocks_late_draft(make_agent, monkeypatch):
+    a, console, notes, calls, *_ = _boot(make_agent)
+    a.REPLIED.clear()
+    a.close_by_conversation("cidZ", {"quotedMessage": {"message_id": "msgEARLY1"}, "message_id": "r1"})
+    a.REPLIED.clear()                      # 模拟重启：内存清空，应从磁盘恢复
+    assert a.already_replied({"message_id": "msgEARLY1"})

@@ -34,7 +34,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.2 2026-11-23"
+VERSION = "v3.2.1 2026-11-23"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -902,8 +902,34 @@ def _quoted_id(e):
 REPLIED = {}   # 本人（或代本人值守）已引用回复过的原消息 ID → 时间；AI 草稿晚于本人回复生成时据此直接作废（11-23 #USbGg）
 
 
+def _replied_path():
+    return os.path.join(HOME, "logs", "replied.json")
+
+
+def _replied_load():
+    if not REPLIED:   # 重启后从磁盘恢复：否则重启后补读到的旧消息又会出草稿（11-23 #pWn7A）
+        try:
+            REPLIED.update(json.load(open(_replied_path(), encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
+    return REPLIED
+
+
+def mark_replied(mid):
+    if not mid:
+        return
+    r = _replied_load(); r[mid] = time.time()
+    keep = {k: v for k, v in r.items() if time.time() - v < 6 * 3600}
+    REPLIED.clear(); REPLIED.update(keep)
+    try:
+        os.makedirs(os.path.dirname(_replied_path()), exist_ok=True)
+        json.dump(keep, open(_replied_path(), "w", encoding="utf-8"))
+    except OSError:
+        pass
+
+
 def already_replied(e):
-    t = REPLIED.get((e or {}).get("message_id"))
+    t = _replied_load().get((e or {}).get("message_id"))
     return bool(t and time.time() - t < 6 * 3600)
 
 
@@ -911,12 +937,11 @@ def close_by_conversation(cid, reply_event=None):
     """本人（或代本人值守的程序，用本人身份发的）在原会话回复后，关闭对应事项（11-23 用户：已处理的不能还挂在草稿待发）。
     对应关系：① 引用了那条消息；② 没引用，但回复里提到的单号（COMIC-1999-092 / TICKET-845 / OPS-…）和某件事一样。
     同群只是说了别的话、对不上任何一件，就都保留，不误关。助手自己发出去的草稿（OUT 里有）在 relevant 里已排除，不会走到这里。"""
+    quoted_id = _quoted_id(reply_event)
+    mark_replied(quoted_id)   # 先记下：AI 还没出事项时本人就已回复，也要算（11-23 #pWn7A）
     items = [(no, x) for no, x in _open_load().items() if x.get("cid") == cid]
     if not items:
         return
-    quoted_id = _quoted_id(reply_event)
-    if quoted_id:
-        REPLIED[quoted_id] = time.time()
     if quoted_id:
         hit = [(no, x) for no, x in items if (x.get("event") or {}).get("message_id") == quoted_id]
     else:
