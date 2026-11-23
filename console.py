@@ -779,7 +779,7 @@ dialog{max-width:520px;width:calc(100% - 32px);border:1px solid var(--border);bo
 </style></head><body>
 <header><div class="brand"><span class="logo">群</span>操作台</div><div class="chips" id="stat"><span class="chip">连接中…</span></div><span class="sp"></span>
 <button class="btn sm" onclick="openChat()">💬 调试群对话</button><button class="btn sm" onclick="openReports()">📋 每日汇报</button><button class="btn sm" onclick="openMonitor()">监听设置</button><button class="btn sm" id="notif" style="display:none">🔔 开启桌面通知</button><span class="ver" id="ver"></span></header>
-<div class="toolbar"><input class="q" id="taskSearch" aria-label="搜索任务" placeholder="搜索群名、任务编号、消息或回复…" oninput="taskQuery=this.value;render()"><span>已回复与实际执行进度分别显示</span></div>
+<div class="toolbar"><input class="q" id="taskSearch" aria-label="搜索任务" placeholder="搜索群名、任务编号、消息或回复…" oninput="taskQuery=this.value;render()"><span>引用回复或写上单号，事情会自动移到「已处理」</span></div>
 <main>
 <section class="col c1"><div class="ch"><span class="ic">✋</span><div><h2>要你判断</h2><div class="sub">拿不准是不是归你、要不要接</div></div><span class="cnt" id="n1">0</span></div><div class="list" id="judge"></div></section>
 <section class="col c2"><div class="ch"><span class="ic">✉️</span><div><h2>草稿待发</h2><div class="sub">AI 写好了，你点头才发</div></div><span class="cnt" id="n2">0</span></div><div class="list" id="send"></div></section>

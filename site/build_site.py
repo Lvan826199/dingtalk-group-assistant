@@ -14,7 +14,7 @@ DOCS = [("分享-可直接部署并运行AI监控钉钉群并自动处理.md", "
 shutil.rmtree(os.path.join(OUT, "files"), ignore_errors=True)   # 只留最新版本的文件，旧的下载链接一起清掉
 os.makedirs(os.path.join(OUT, "files"), exist_ok=True); os.makedirs(os.path.join(OUT, "assets"), exist_ok=True)
 shutil.copy(os.path.join(HERE, "assets", "marked.min.js"), os.path.join(OUT, "assets"))
-for _img in ("console.jpg", "console-panel.jpg"):   # 3.0 操作台截图（演示数据，人名都是虚构的）
+for _img in ("console.jpg", "console-panel.jpg"):   # 操作台截图（v3.2，演示数据，人名都是虚构的）
     shutil.copy(os.path.join(HERE, "assets", _img), os.path.join(OUT, "assets"))
 ver = re.search(r'VERSION = "([^"]+)"', open(os.path.join(REPO, "agent.py"), encoding="utf-8").read()).group(1)
 rows = []
