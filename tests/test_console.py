@@ -69,42 +69,8 @@ def test_console_not_mine_and_reply_new(make_agent):
     assert sorted(d["result"] for d in s["done"]) == ["不发", "已发送"]
 
 
-def test_reopened_item_keeps_original_reply_and_execution_separate(make_agent):
-    a, console, notes, calls, n1, _ = _boot(make_agent)
-    original = a._open_load()[n1]["event"].copy()
-    a.audit(n1, original, "我会核验并保留证据", "本人确认")
-    a.open_close(n1, "已确认发出")
-    os.remove(a.draft_by_no(n1)[0])
-    a._commit_save({"comment:135790|jira:24680": {
-        "task_key": "comment:135790|jira:24680", "status": "waiting_resources",
-        "original_message_ids": [original["message_id"]], "conversation_ids": ["cidG"],
-        "next_action": "等待授权入口"}})
-    a.open_add({**original, "content": "后台缺口说明：24680待执行入口"}, "escalate", "缺执行入口")
-    c = next(c for c in console.state()["judge"] if c["no"] == n1)
-    assert c["text"] == original["content"]
-    assert c["sent"] == "我会核验并保留证据" and c["reply_status"] == "已回复"
-    assert c["commitment"]["status"] == "waiting_resources"
-    assert c["task_key"] == "comment:135790|jira:24680"
-    assert a._commit_load()[c["task_key"]]["status"] == "waiting_resources"
 
 
-def test_manual_done_requires_note_keeps_execution_and_never_sends(make_agent):
-    a, console, notes, calls, n1, _ = _boot(make_agent)
-    x = a._open_load()[n1]
-    a._commit_save({x["task_key"]: {"task_key": x["task_key"], "status": "waiting_resources",
-                                    "original_message_ids": [x["event"]["message_id"]],
-                                    "conversation_ids": [x["cid"]]}})
-    before = a._commit_load()
-    assert _post(console, {"no": n1, "action": "manual_done"})["msg"] == "请填写处理说明"
-    assert n1 in a._open_load()
-    calls.clear()
-    assert _post(console, {"no": n1, "action": "manual_done", "text": "已在钉钉回过，等研发样本"})["msg"] == "已处理"
-    assert n1 not in a._open_load() and a.draft_by_no(n1)[0] is None
-    assert a._commit_load() == before
-    assert not any("+messages-reply" in c or "+messages-send" in c for c in calls)
-    detail = console.done_detail(n1)
-    assert "等研发样本" in detail["why"] and detail["commitment"]["status"] == "waiting_resources"
-    assert detail["sent"] == ""
 
 
 def test_duplicate_open_preserves_source_and_questions(make_agent):
@@ -265,3 +231,33 @@ def test_history_by_group(make_agent):
     h = json.loads(_get(console, "/api/history?cid=cidG").read())
     assert [m["text"] for m in h] == ["一", "二"]                                  # 按时间正序
     assert json.loads(_get(console, "/api/history?cid=cidX").read()) == []      # 没监听的群不给看
+
+
+def test_dingtalk_done_and_console_chat_stay_in_sync(make_agent):
+    """11-23：在钉钉调试群说「#编号 已处理：说明」和在操作台点「已手动处理」一样；操作台对话里能看到调试群的往来。"""
+    a, console, notes, calls, n1, n2 = _boot(make_agent)
+    a.command({"content": f"{n2} 已处理：钉钉里回过了", "sender": "本人", "conversation_id": "cidN", "message_id": "m-done"})
+    s = console.state()
+    assert n2 not in [c["no"] for c in s["judge"]] and any(d["no"] == n2 and "钉钉里回过了" in d["why"] for d in s["done"])
+    rows = console.chat()
+    assert isinstance(rows, list)
+    assert console.say("") == "内容为空或没配提醒群"
+
+
+def test_quoted_reminder_plain_words_close_as_not_mine(make_agent):
+    """11-23：引用提醒回「和我无关，无需回复」要直接当「不归我」关掉，不要当成追问。"""
+    a, console, notes, calls, n1, n2 = _boot(make_agent)
+    q = {"message_id": "robot1", "text": f"### ⏰ 1 件超过 2 小时还没处理\n\n**任务：** {n2} / TICKET-832\n\n一位同事：请安排测"}
+    a.command({"content": "@提醒助手 和我无关，无需回复", "sender": "本人", "conversation_id": "cidN", "message_id": "m-x", "quoted_message": q})
+    assert n2 not in a._open_load()
+    assert any(d["no"] == n2 and "不归我" in d["why"] for d in console.state()["done"])
+
+
+def test_late_ai_draft_skipped_when_owner_already_replied(make_agent):
+    """11-23 #USbGg：本人 14:35 已引用回复，AI 14:36 才出草稿——草稿不该再出现。"""
+    a, console, notes, calls, n1, n2 = _boot(make_agent)
+    e = {"sender": "同事戊", "content": "@本人 合同 diff 给一下", "conversation_id": "cidG", "message_id": "msgLATE00001"}
+    a.close_by_conversation("cidG", {"content": "已发", "quoted_message": {"message_id": "msgLATE00001"}})
+    a.decide = lambda batch: {"action": "reply", "mine": True, "text": "我来整理", "reason": "x"}
+    assert "不再生成草稿" in a.handle([e])
+    assert not any(x.get("event", {}).get("message_id") == "msgLATE00001" for x in a._open_load().values())

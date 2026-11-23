@@ -28,7 +28,7 @@ def test_notification_bridge_visible_without_closing_business_task(make_agent):
     assert a._open_load() == before and len(state['send']) == len(state['judge']) == 1
     assert not calls
     page = _get(c, '/').read().decode()
-    assert '机器人通知' in page and '机器人未送达' in page
+    assert '调试群对话' in page and '钉钉没送达' in page   # 3.1：通知并入调试群对话面板
 
 
 def test_offline_outbox_imports_once_without_resending(make_agent):

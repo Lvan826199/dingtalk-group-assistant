@@ -6,7 +6,7 @@ HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.dirname(HERE)
 OUT = os.path.expanduser(os.environ.get("SITE_DIR", "~/qa-agent-site"))
 PREVIEW = os.environ.get("PREVIEW") == "1"
 UPDATE_BASE_URL = os.environ.get("UPDATE_BASE_URL", "https://lvan826199.github.io/dingtalk-group-assistant/").rstrip("/")
-DOCS = [("分享-可直接部署并运行AI监控钉钉群并自动处理.md", "部署文档（新同事从这里开始）", "下载部署文档，拖给 AI 发「开始」；安装包可选"),
+DOCS = [("分享-可直接部署并运行AI监控钉钉群并自动处理.md", "部署文档（新同事从这里开始）", "下载部署文档，拖给 AI 发「开始」"),
         ("CHANGELOG.md", "更新记录", "每个版本改了什么"),
         ("roles/角色职责库.json", "角色职责库", "没有协作库时选角色用；可以自己增删改"),
         ("agent.py", "agent.py 源码", "助手主程序"),
@@ -44,12 +44,9 @@ for i, (name, title, note) in enumerate(DOCS):
                  f'<a href="view.html?f={dst}&n={html.escape(name)}">在线看</a><a href="files/{dst}" download="{html.escape(name)}">下载</a></div></div>')
 page = open(os.path.join(HERE, "template.html"), encoding="utf-8").read()
 if PREVIEW:
-    banner = '<div style="background:#b42318;color:#fff;text-align:center;font-weight:800;padding:12px 16px;letter-spacing:.04em">预览版，未发布 · 此页面和安装包只供验收，正式用户仍使用 8090 的 v3.0</div>'
+    banner = '<div style="background:#b42318;color:#fff;text-align:center;font-weight:800;padding:12px 16px;letter-spacing:.04em">预览版，未发布 · 此页面和升级包只供验收，正式用户仍使用 8090 的 v3.0</div>'
     page = page.replace("<body>", "<body>" + banner, 1)
 for k, v in {"{{VER}}": html.escape(ver), "{{VER_SHORT}}": html.escape(ver.split()[0]), "{{DOC0}}": html.escape(DOCS[0][0]),
-             "{{PACKAGE_WINDOWS}}": "files/群消息助手-" + ver.split()[0] + "-windows.zip",
-             "{{PACKAGE_MACOS}}": "files/群消息助手-" + ver.split()[0] + "-macos.zip",
-             "{{PACKAGE_LINUX}}": "files/群消息助手-" + ver.split()[0] + "-linux.tar.gz",
              "{{CHANGELOG}}": cl, "{{DOWNLOADS}}": "".join(cards)}.items():
     page = page.replace(k, v)
 import hashlib   # 静态文件按内容取短哈希当 ?v=，内容一变浏览器就重新取（11-19：版本号不变时用户看到的是旧缓存）

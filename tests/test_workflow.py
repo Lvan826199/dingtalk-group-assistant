@@ -134,11 +134,6 @@ def test_console_does_not_mark_connecting_listener_ready_and_shows_queue(make_ag
     assert s["owner"]["queued"] == 1 and "processing" in s and "queue" in s
 
 
-def test_sent_refusal_never_becomes_execution_commitment(make_agent):
-    a, c, _, _, no, _ = _boot(make_agent)
-    assert c.act(no, "edit_send", "我没有正式服权限，这项任务我不承接，请有权限人员执行。") == "ok"
-    rec = next(iter(a._commit_load().values()))
-    assert rec["status"] == "declined" and "不派发" in rec["next_action"]
 
 
 def test_confirmation_ignores_old_number_mentioned_in_report_body(make_agent):
@@ -153,18 +148,6 @@ def test_confirmation_ignores_old_number_mentioned_in_report_body(make_agent):
     assert a.command_text(message) == no + " 可以发送"
 
 
-def test_fact_reply_preserves_completed_and_conditional_reply_waits(make_agent):
-    a, c, _, _, no, _ = _boot(make_agent)
-    x = a._open_load()[no]; key = x["task_key"]
-    a._commit_save({key: {"task_key": key, "status": "completed", "commitment_text": "原核查已完成", "history": [], "evidence": ["original-report"]}})
-    assert c.act(no, "edit_send", "我已核对上一轮记录，详情见原报告。") == "ok"
-    assert a._commit_load()[key]["status"] == "completed"
-    assert a._commit_load()[key]["evidence"] == ["original-report"]
-    # 新的条件承诺先保留前置，不能立即派成无条件执行。
-    ev = {"message_id": "conditional", "conversation_id": "cidG", "sender": "同事", "content": "Jira 24680 等测试窗口"}
-    no = a.open_add(ev, "draft", "确认窗口")
-    rec = a.commitment_start(no, "待负责人确认窗口后，我会补测。", {"message_id": "approved"})
-    assert rec["status"] == "waiting_dependency"
 
 
 def test_notification_layout_preserves_code_links_and_all_facts():

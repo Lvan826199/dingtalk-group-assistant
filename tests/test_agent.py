@@ -125,89 +125,14 @@ def test_report_only_says_sent_after_successful_confirmation(make_agent, fail):
         assert not any(r["stage"] == "已发送" for r in rows)
 
 
-def test_watch_reads_reports_without_starting_listener_or_calling_ai(make_agent, capsys):
-    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "status_notifications": False})
-    a.status_event("处理完成", "别人之间的对话，不回复", event=msg("@另一位同事 查一下", mid="mREAD"))
-    before = open(a.STATUS_LOG, "rb").read()
-    a.watch(once=True)
-    output = capsys.readouterr().out
-    assert "测试群 / 同事" in output and "mREAD" in output and "不回复" in output
-    assert open(a.STATUS_LOG, "rb").read() == before
-    assert not calls and not notes and not a.SEEN and a.Q.empty() and not a.CHILDREN
 
 
-def test_default_report_window_uses_current_terminal_and_respects_disable(make_agent, monkeypatch):
-    a, _, _ = make_agent({})
-    assert a.CFG["report_window"] is True
-    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(a.subprocess, "Popen", lambda *x, **k: pytest.fail("已有终端不应另开窗口"))
-    a.open_report_window()
-    assert "当前终端" in open(a.STATUS_LOG, encoding="utf-8").read()
-    a.CFG["report_window"] = False
-    a.open_report_window()
-    assert "关闭自动开窗" in open(a.STATUS_LOG, encoding="utf-8").read()
 
 
-def test_normal_start_opens_report_window_but_watch_does_not(make_agent, monkeypatch):
-    a, _, _ = make_agent({"console": False})   # 不开操作台（会占端口、会多调 in_window）
-    actions = []
-    monkeypatch.setattr(sys, "argv", ["agent.py"])
-    monkeypatch.setattr(a, "open_report_window", lambda: actions.append("report"))
-    class IdleThread:
-        def __init__(self, **kw): actions.append("thread")
-        def start(self): pass
-        def join(self, timeout=None): pass
-        def is_alive(self): return True
-    monkeypatch.setattr(a.threading, "Thread", IdleThread)
-    a.in_window = lambda: True
-    monkeypatch.setattr(a.UPDATE_EXIT, "wait", lambda timeout: True)
-    a.daily_summary = lambda: None
-    a.main()
-    assert actions[0] == "report" and actions.count("report") == 1
-    monkeypatch.setattr(sys, "argv", ["agent.py", "watch", "--once"])
-    actions.clear(); a.main()
-    assert not actions
 
 
-@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
-def test_default_report_window_opens_readonly_viewer_on_each_platform(make_agent, monkeypatch, platform):
-    a, _, calls = make_agent({"report_window": True})
-    launched = []
-    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
-    monkeypatch.setattr(sys, "platform", platform)
-    monkeypatch.setattr(sys, "executable", os.path.join(a.HOME, "pythonw.exe") if platform == "win32" else sys.executable)
-    monkeypatch.setattr(a.subprocess, "Popen", lambda args, **kw: launched.append((args, kw)))
-    monkeypatch.setenv("DISPLAY", ":0")
-    monkeypatch.setattr(a.shutil, "which", lambda name: "/usr/bin/" + name)
-    a.open_report_window()
-    if platform == "darwin":
-        assert calls[-1][:3] == ["/usr/bin/open", "-a", "Terminal"]
-        script = open(calls[-1][-1], encoding="utf-8").read()
-        assert "watch --auto" in script and "exec " in script
-    else:
-        args, kw = launched[0]
-        assert args[-2:] == ["watch", "--auto"]
-        assert kw["cwd"] == a.HOME
-        if platform == "win32":
-            assert args[0].endswith("python.exe") and kw["creationflags"] == 0x10
-            assert not (kw["creationflags"] & 0x08000000) and "startupinfo" not in kw
-        else:
-            assert args[:2] == ["/usr/bin/x-terminal-emulator", "-e"]
-    assert not a.CHILDREN and not a.SEEN and a.Q.empty()
 
 
-def test_confirmed_draft_creates_commitment_without_second_instruction(make_agent):
-    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
-    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "high",
-                          "text": "我会按 Jira 24680 评论 135790 验证并留证。", "reason": "明确 QA 验证安排"}
-    event = msg("@本人 正式服按 Jira 24680 评论 135790 验证，证据闭环后再撤临时 ELB", mid="msgCOMMIT24680")
-    a.handle([event])
-    confirm(a, "#24680", "可以发送")
-    commits = json.load(open(a.COMMITMENTS_PATH, encoding="utf-8"))
-    assert len(commits) == 1
-    rec = next(iter(commits.values()))
-    assert rec["status"] == "committed" and rec["commitment_text"].startswith("我会按")
-    assert any("已承诺执行" in line for line in open(a.STATUS_LOG, encoding="utf-8"))
 
 
 def test_same_task_from_second_group_reuses_existing_open_item(make_agent):
@@ -228,66 +153,12 @@ def test_task_key_keeps_issue_number(make_agent):
     assert a.task_key(msg("OPS-1999-018 R03 复测")) == "issue:OPS-1999-018"
 
 
-def test_report_window_headless_or_launch_failure_keeps_backend_available(make_agent, monkeypatch):
-    a, notes, _ = make_agent({"report_window": True})
-    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.delenv("DISPLAY", raising=False); monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-    a.open_report_window()
-    assert "没有图形桌面" in notes[-1][1] and "后台继续运行" in notes[-1][1]
-    monkeypatch.setattr(sys, "platform", "win32")
-    def fail(*args, **kw):
-        raise OSError("启动失败")
-    monkeypatch.setattr(a.subprocess, "Popen", fail)
-    a.open_report_window()
-    assert "启动失败" in notes[-1][1] and not a.CHILDREN
 
 
-def test_automatic_report_window_is_singleton_and_lock_releases(make_agent, monkeypatch, capsys):
-    a, _, _ = make_agent()
-    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
-    lock = a.report_window_lock()
-    assert lock is not None
-    try:
-        assert a.report_window_lock() is None
-        monkeypatch.setattr(a.subprocess, "Popen", lambda *x, **k: pytest.fail("已有查看器不应另开"))
-        a.open_report_window()
-        a.watch(auto=True)
-        assert "已有自动汇报窗口" in capsys.readouterr().out
-    finally:
-        lock.close()
-    again = a.report_window_lock()
-    assert again is not None
-    again.close()
 
 
-def test_report_reader_keeps_partial_line_and_follows_replaced_log(make_agent, tmp_path):
-    a, _, _ = make_agent()
-    path = tmp_path / "reports.jsonl"; path.write_bytes(b"")
-    records = a.report_records(path)
-    assert next(records) is None
-    data = (json.dumps({"stage": "处理完成", "detail": "未回复"}, ensure_ascii=False) + "\n").encode()
-    path.write_bytes(data[:-4]); assert next(records) is None
-    with path.open("ab") as f:
-        f.write(data[-4:])
-    assert next(records)["detail"] == "未回复"
-    assert next(records) is None
-    path.rename(tmp_path / "old.jsonl")
-    path.write_text('{"stage":"new"}\n', encoding="utf-8")
-    assert next(records)["stage"] == "new"
-    assert next(records) is None
-    path.write_text('{"x":1}\n', encoding="utf-8")
-    assert next(records) == {"x": 1}
-    records.close()
 
 
-def test_reports_mask_credentials_and_terminal_control_characters(make_agent, capsys):
-    a, _, _ = make_agent({"webhook": "https://example.invalid/private-hook", "secret": "private-signing-key"})
-    a.status_event("收到消息", "private-signing-key https://example.invalid/private-hook X-Internal-Key: private-api-key", event=msg("token=private-token \x1b[2J"))
-    a.watch(once=True)
-    output = capsys.readouterr().out + open(a.STATUS_LOG, encoding="utf-8").read()
-    assert all(value not in output for value in ("private-signing-key", "private-hook", "private-api-key", "private-token", "\x1b"))
-    assert "[已隐藏]" in output
 
 
 def test_auto_reply_commands_rejected_and_readonly_toggle(make_agent):

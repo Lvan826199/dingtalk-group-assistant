@@ -87,14 +87,24 @@ def test_background_result_updates_one_draft_without_sending(make_agent):
     assert "草稿待你确认" in notes[-1][0]
 
 
-def test_same_group_unquoted_message_and_dws_reply_do_not_close_pending(make_agent):
+def test_unquoted_unrelated_message_keeps_pending_but_quoted_reply_closes(make_agent):
     a, _, _ = make_agent()
     e = image_event()
     no = a.open_add(e, "draft", "待审核")
     a.close_by_conversation("cidG", {"content": "另一件事已处理"})
     assert no in a._open_load()
-    a.close_by_conversation("cidG", {"quoted_message": {"message_id": e["message_id"]}, "messageAiSendFlag": "DWS"})
-    assert no in a._open_load()
+    # 11-23 用户：代本人值守的程序用本人身份引用回复，也算处理了（以前不关，导致已处理的还挂在草稿待发）
+    a.close_by_conversation("cidG", {"quoted_message": {"openMessageId": e["message_id"]}, "messageAiSendFlag": "DWS"})
+    assert no not in a._open_load()
+
+
+def test_reply_mentioning_same_ticket_closes_only_that_item(make_agent):
+    a, _, _ = make_agent()
+    e1 = {**image_event(), "message_id": "msgAAAA1", "content": "【COMIC-1999-092｜请确认测试进度】"}
+    e2 = {**image_event(), "message_id": "msgBBBB2", "content": "TICKET-832 请安排测"}
+    n1 = a.open_add(e1, "draft", "x"); n2 = a.open_add(e2, "draft", "y")
+    a.close_by_conversation("cidG", {"content": "收到，COMIC-1999-092 接口核对我来测", "quoted_message": {"message_id": "别的消息"}})
+    assert n1 not in a._open_load() and n2 in a._open_load()
 
 
 def test_robot_text_restores_newlines_and_preserves_code(make_agent):

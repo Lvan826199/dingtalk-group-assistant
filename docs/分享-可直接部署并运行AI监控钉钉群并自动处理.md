@@ -2,7 +2,7 @@
 
 > **直接开始**：把本文件拖给自己的 AI 助手，发「开始」。AI 会按步骤完成配置；如果希望一键安装或方便升级，再从指南页下载对应系统的安装包。
 >
-> 作者：梦无矶　版本：v3.1.4 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
+> 作者：梦无矶　版本：v3.2 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
 >
 > **已经装过**：把本文件拖给 AI 助手发「开始」即可继续使用；想用安装包升级时再运行对应系统的安装脚本，之后提醒群回「升级」即可。跨版本可直接装最新版，配置、记忆、草稿、工作手册、角色职责库、留痕和日志都保留。新规则与个人设置冲突时，AI 必须逐条请本人决定。
 
@@ -409,9 +409,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
       python agent.py send <草稿> 发送一条草稿
       python agent.py check      自检（环境、登录、配置）
       python agent.py status     今天处理了多少、还有几件没处理
-      python agent.py watch      打开只读实时汇报窗口，不重复启动监听
-      python agent.py watch --once  查看最近 20 条状态后退出
-      python agent.py clear      清空待回复（没处理完的事和草稿全部清掉，不发出）
+                  python agent.py clear      清空待回复（没处理完的事和草稿全部清掉，不发出）
       python agent.py stickers   下载 / 更新内置表情包索引（v2.6）
       python agent.py audit [N]  看最近 N 条发出留痕（谁、何时确认、问过 AI 什么）（v2.8）
       python agent.py purge      立刻清掉原始记录（消息原文、群历史导出、旧日志），记忆和草稿不动（v2.7）
@@ -419,7 +417,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.1.4 2026-11-23"
+VERSION = "v3.2 2026-11-23"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -752,123 +750,12 @@ def status_event(stage, detail="", announce=False, event=None):
         notify(f"📡 {stage}", format_report(rec) if event else rec["detail"])
 
 
-def report_records(path, follow=True, tail=20):
-    """只读状态日志；保留半行，支持文件截断/替换，不碰监听或消费游标。"""
-    offset, identity, initial = 0, None, True
-    while True:
-        records = deque(maxlen=tail) if initial else []
-        try:
-            with open(path, "rb") as f:
-                st = os.fstat(f.fileno())
-                current = (st.st_dev, st.st_ino)
-                if current != identity or st.st_size < offset:
-                    offset = 0
-                identity = current
-                f.seek(offset)
-                while True:
-                    line = f.readline()
-                    if not line or not line.endswith(b"\n"):
-                        break
-                    offset = f.tell()
-                    try:
-                        rec = json.loads(line.decode("utf-8"))
-                    except (ValueError, UnicodeDecodeError):
-                        continue
-                    if isinstance(rec, dict):
-                        records.append(rec)
-        except FileNotFoundError:
-            pass
-        yield from records
-        initial = False
-        if not follow:
-            return
-        yield None
 
 
-def report_window_lock():
-    """一个安装目录只保留一份自动查看器；锁随进程退出释放，不触碰事件。"""
-    f = open(os.path.join(HOME, "logs", "report-window.lock"), "a+b")
-    try:
-        if os.name == "nt":
-            import msvcrt
-            if os.fstat(f.fileno()).st_size == 0:
-                f.write(b"0"); f.flush()
-            f.seek(0); msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return f
-    except OSError:
-        f.close()
-        return None
 
 
-def open_report_window():
-    """默认随后台打开只读查看器。已有交互终端直接输出；查看器不属于监听子进程。"""
-    if CFG.get("report_window") is False:
-        status_event("汇报窗口", "已按本机设置关闭自动开窗，状态仍写入日志")
-        return
-    if sys.stdout and sys.stdout.isatty():
-        status_event("汇报窗口", "实时汇报已在当前终端显示")
-        return
-    try:
-        lock = report_window_lock()
-        if lock is None:
-            status_event("汇报窗口", "已有自动汇报窗口，继续使用，不重复打开")
-            return
-        lock.close()
-        args = [sys.executable, "-u", os.path.abspath(__file__), "watch", "--auto"]
-        if sys.platform == "win32":
-            # pythonw 不附带控制台；查看器必须用同目录的 python.exe，且不能套 NOWIN。
-            if os.path.basename(args[0]).lower() == "pythonw.exe":
-                args[0] = os.path.join(os.path.dirname(args[0]), "python.exe")
-            subprocess.Popen(args, cwd=HOME, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10))
-        elif sys.platform == "darwin":
-            script = os.path.join(HOME, "logs", "实时汇报.command")
-            with open(script, "w", encoding="utf-8") as f:
-                f.write("#!/bin/sh\nexec " + shlex.join(args) + "\n")
-            os.chmod(script, 0o700)
-            r = run(["/usr/bin/open", "-a", "Terminal", script], timeout=15)
-            if r.returncode:
-                raise OSError((r.stderr or r.stdout or "Terminal 启动失败")[:200])
-        else:
-            if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-                raise OSError("没有图形桌面会话，无法开终端窗口；后台继续运行，状态写入 logs/status.jsonl")
-            terminals = [("x-terminal-emulator", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"), ("xterm", "-e")]
-            terminal = next(([exe, sep] for name, sep in terminals if (exe := shutil.which(name))), None)
-            if not terminal:
-                raise OSError("未找到终端程序；请安装桌面终端或在本机终端运行 agent.py watch")
-            subprocess.Popen(terminal + args, cwd=HOME, start_new_session=True)
-        status_event("汇报窗口", "已请求打开实时汇报窗口；窗口会自行显示最近记录和新状态")
-    except (OSError, subprocess.SubprocessError) as ex:
-        detail = report_text(ex)
-        status_event("汇报窗口未打开", detail)
-        notify("⚠️ 实时汇报窗口未打开", detail + "。后台继续运行；查看日志或在终端运行 agent.py watch。")
 
 
-def watch(once=False, auto=False):
-    lock = report_window_lock() if auto else None
-    if auto and lock is None:
-        console_write("已有自动汇报窗口，本窗口退出，不启动监听。")
-        return
-    console_write("群消息助手 · 实时汇报（只读查看，不启动第二套监听；Ctrl+C 只关闭查看窗口）")
-    last, shown, pulse = None, 0, time.monotonic()
-    try:
-        for rec in report_records(STATUS_LOG, follow=not once):
-            if rec is not None:
-                console_write(format_report(rec)); last = rec; shown += 1; pulse = time.monotonic()
-            else:
-                if time.monotonic() - pulse >= 60:
-                    console_write("等待新状态；最后记录：" + report_text((last or {}).get("time") or "暂无") + "。此窗口仅展示日志，进程存活和处理结果需结合状态核对。")
-                    pulse = time.monotonic()
-                time.sleep(0.5)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if lock:
-            lock.close()
-    if not shown:
-        console_write("尚无状态记录；请确认后台助手已启动，升级后已重启运行。")
 
 
 def status_snapshot():
@@ -1221,11 +1108,6 @@ EXECUTION_LOCK = threading.Lock()
 COMMITMENT_LOCK = threading.RLock()
 
 
-def _commit_transaction(fn):
-    def wrapped(*args, **kwargs):
-        with COMMITMENT_LOCK:
-            return fn(*args, **kwargs)
-    return wrapped
 
 
 def _text_for_task(e):
@@ -1264,310 +1146,36 @@ def task_key(e):
     return "|".join(sorted(set(ids)))
 
 
-def _commit_load():
-    try:
-        return json.load(open(COMMITMENTS_PATH, encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
 
 
-def _commit_save(d):
-    from package_runtime import atomic_write
-    with LOCK:
-        atomic_write(COMMITMENTS_PATH, json.dumps(d, ensure_ascii=False, indent=1).encode("utf-8"))
 
 
-def commitment_for_key(key):
-    return _commit_load().get(key) if key else None
 
 
-@_commit_transaction
-def commitment_start(no, draft, confirmation_event):
-    """草稿确认成功后建立承诺；后续同一事项只关联，不重复承诺或重复执行。"""
-    items = _open_load()
-    x = items.get(no) or {}
-    key = x.get("task_key") or task_key(x.get("event") or {})
-    if not key:
-        ev = x.get("event") or {}
-        if not ev.get("message_id"):
-            return None
-        key = "message:" + hashlib.sha256((str(ev.get("conversation_id")) + ":" + str(ev["message_id"])).encode()).hexdigest()[:24]
-    commits = _commit_load()
-    # 发出事实说明、谢意或拒接说明，不等于接受执行任务。
-    declined = bool(re.search(r"(?:我|本人)[^。！？；\n]{0,12}(?:不(?:再)?承接|不接(?:这|该|此)|不再负责|不再(?:执行|复核))", draft))
-    promised = bool(re.search(r"(?:我|我们)(?:会|将|来|负责|继续|按|补测|核验|复测|核实|验证|执行|跟进)", draft))
-    previous = commits.get(key)
-    previous_status = (previous or {}).get("status")
-    if previous and previous.get("confirmation_message_id") == confirmation_event.get("message_id"):
-        return previous
-    if not declined and not promised:
-        # 普通进度回复保留已有执行状态，尤其不能把等待、完成又重置成待执行。
-        if previous:
-            previous.setdefault("history", []).append({"at": dt.datetime.now().isoformat(timespec="seconds"),
-                "stage": "已补充回复", "detail": draft, "message_id": confirmation_event.get("message_id")})
-            _commit_save(commits)
-        return previous
-    conditional = not declined and bool(re.search(r"待.{0,60}(?:后|确认)|等.{0,60}(?:后|确认)|收到.{0,40}后|条件齐|前置.{0,12}(?:确认|齐)", draft))
-    state = "declined" if declined else "waiting_dependency" if conditional else "committed"
-    rec = commits.get(key) or {
-        "task_key": key, "status": "committed", "created_at": dt.datetime.now().isoformat(timespec="seconds"),
-        "original_message_ids": [], "conversation_ids": [], "evidence": [], "history": []
-    }
-    ev = x.get("event") or {}
-    message_ids = [ev.get("message_id")] + list(x.get("related_message_ids") or [])
-    conversation_ids = [x.get("cid")] + list(x.get("related_cids") or [])
-    for field, values in (("original_message_ids", message_ids), ("conversation_ids", conversation_ids)):
-        rec.setdefault(field, [])
-        for value in values:
-            if value and value not in rec[field]:
-                rec[field].append(value)
-    rec.update({"status": state, "commitment_text": draft, "scope": x.get("what", ""),
-                "confirmed_at": dt.datetime.now().isoformat(timespec="seconds"),
-                "confirmed_by": CFG.get("my_name"), "confirmation_message_id": confirmation_event.get("message_id")})
-    kind = execution_kind(draft)
-    if kind and not declined:
-        rec.update(execution_kind=kind, event=ev, queued_at=time.time(), execution_backend=(previous or {}).get("execution_backend") or ("local" if CFG.get("execution_jobs") else "external"))
-        # 已在执行的事项被再次确认，不重复启动一个测试进程。
-        if previous and previous_status in ("starting", "running"):
-            rec["status"] = previous_status
-    stage = "已拒接" if declined else "等待执行前置" if conditional else "执行任务已入队" if kind else "已承诺执行"
-    rec["next_action"] = "已明确不承接，不派发执行或复核" if declined else ("先核对约定前置，齐备后再执行" if conditional else "按已确认承诺继续执行并留证")
-    rec.setdefault("history", []).append({"at": dt.datetime.now().isoformat(timespec="seconds"), "stage": stage,
-                           "detail": "本人直接要求实际执行；原群尚未发送任何回复。" if confirmation_event.get("execution_direct") else ("拒接说明已发出，不建立执行承诺。" if declined else "草稿已由本人确认并成功发出；执行仍按已确认范围和前置，结果以证据为准。"),
-                           "message_id": confirmation_event.get("message_id")})
-    commits[key] = rec
-    _commit_save(commits)
-    status_event(stage, f"{no}：任务键 {key}；{rec['next_action']}", event=ev)
-    return rec
 
 
-@_commit_transaction
-def commitment_update(key, stage, detail="", evidence=None, status=None):
-    """追加执行阶段和证据路径；证据只记本地文件或已核对的 Jira / 附件引用。"""
-    if not key:
-        return None
-    commits = _commit_load(); rec = commits.get(key)
-    if not rec:
-        return None
-    rec["status"] = status or rec.get("status", "committed")
-    if detail:
-        rec["next_action"] = detail[:1000]
-    for path in evidence or []:
-        if path and path not in rec.setdefault("evidence", []):
-            rec["evidence"].append(path)
-    rec.setdefault("history", []).append({"at": dt.datetime.now().isoformat(timespec="seconds"),
-                                          "stage": stage, "detail": detail[:1000],
-                                          "evidence": list(evidence or [])})
-    _commit_save(commits)
-    return rec
 
 
-@_commit_transaction
-def _execution_patch(key, **fields):
-    commits = _commit_load()
-    if key in commits:
-        commits[key].update(fields)
-        _commit_save(commits)
 
 
-def execution_kind(text):
-    if re.search(r"回归", text) and re.search(r"接口|自动化", text):
-        return "regression"
-    if re.search(r"复测|复验|重测", text):
-        return "retest"
-    return ""
 
 
-def execution_requested(text):
-    """当前本人指令才可入队；询问进度、条件计划、草稿和否定语句都不当授权。"""
-    text = str(text or "").strip()
-    if not execution_kind(text) or re.search(r"[?？]$|为什么|何时|什么时候|了吗|了没|有没有|是否|尚未|还没|没(?:有)?(?:做|跑|执行)", text):
-        return False
-    if re.search(r"(?:别|不要|不用|不必|先不|暂不|待|等待|等到|如果|草稿|起草|改写|翻译|解释)", text):
-        return False
-    return bool(re.match(r"^(?:请|你|帮我|给我|现在|立即|马上|继续|先|再|开始|跑|执行|进行|重新|补跑|复测|复验|重测)", text))
 
 
-def enqueue_owner_execution(event, text):
-    no = open_add(event, "execution", "本人已明确要求执行")
-    rec = commitment_start(no, "我会执行：" + text, {**event, "execution_direct": True})
-    if rec:
-        route = "已进入本机测试队列，尚未运行" if rec.get("execution_backend") == "local" else "已记录，等待当前值守助手的实际执行回执"
-        notify("▶ 执行任务已登记", event_context(event, no) + "\n任务：" + text +
-               "\n当前状态：" + route + "；运行、日志和结果分别记录。")
-    return rec
 
 
-def execution_snapshot(limit=None):
-    rows = sorted([x for x in _commit_load().values() if x.get("execution_kind")],
-                  key=lambda x: x.get("queued_at", 0), reverse=True)
-    return rows[:limit] if limit is not None else rows
 
 
-def execution_notice(key, stage, detail):
-    rec = _commit_load().get(key) or {}
-    event = rec.get("event") or {}
-    commitment_update(key, stage, detail)
-    status_event(stage, detail, event=event)
-    if notify(stage, event_context(event) + "\n任务：" + str(rec.get("commitment_text", "")) + "\n" + detail):
-        _execution_patch(key, last_notice=time.time())
 
 
-def recover_executions():
-    # 进程退出时外部测试可能仍在运行，不自动重跑未知结果的任务。
-    for rec in execution_snapshot():
-        if rec.get("execution_backend") != "external" and rec.get("status") in ("starting", "running"):
-            commitment_update(rec["task_key"], "执行中断", "服务重启，先核对既有运行编号与日志，禁止自动重跑。", status="interrupted")
-            execution_notice(rec["task_key"], "⚠️ 执行中断待核实", "已有运行结果未知，原日志保留；需要核对后再决定是否重试。")
 
 
-def run_execution(key):
-    """只运行本机预先配置的测试入口；不执行消息中的命令，不用回复文本充当测试结果。"""
-    with EXECUTION_LOCK:
-        rec = _commit_load().get(key) or {}
-        if rec.get("status") != "committed" or not rec.get("execution_kind") or rec.get("execution_backend") == "external":
-            return False
-        job = (CFG.get("execution_jobs") or {}).get(rec["execution_kind"]) or {}
-        cmd = job.get("command")
-        event = rec.get("event") or {}
-        if (not isinstance(cmd, list) or not cmd or not all(isinstance(x, str) and x for x in cmd)
-                or job.get("environment") != "test" or not job.get("cwd")
-                or re.search(r"正式服|生产|production", str(rec.get("commitment_text")) + event_text(event), re.I)):
-            reason = "未执行：缺少已配置的测试入口、测试环境或工作目录，或消息涉及生产范围；需核实执行条件。"
-            commitment_update(key, "执行前置阻塞", reason, status="waiting_resources")
-            execution_notice(key, "⚠️ 回归/复测尚未执行", reason)
-            return False
-        jobdir = os.path.abspath(os.path.expanduser(job["cwd"]))
-        run_id = str(time.time_ns())
-        directory = os.path.join(HOME, "logs", "executions", run_id)
-        os.makedirs(directory, exist_ok=True)
-        taskfile, resultfile, logfile = [os.path.join(directory, name) for name in ("task.json", "result.json", "output.log")]
-        with open(taskfile, "w", encoding="utf-8") as f:
-            json.dump({"task_key": key, "request": rec["commitment_text"], "event": event,
-                       "environment": "test", "run_id": run_id}, f, ensure_ascii=False)
-        _execution_patch(key, status="starting", execution_run={"id": run_id, "log": logfile, "result": resultfile,
-                         "environment": "test", "program": os.path.basename(cmd[0])})
-        process = None
-        try:
-            env = {**os.environ, "QA_EXECUTION_TASK": taskfile, "QA_EXECUTION_RESULT": resultfile}
-            with open(logfile, "wb") as out:
-                process = subprocess.Popen(cmd, cwd=jobdir, env=env, stdin=subprocess.DEVNULL,
-                                           stdout=out, stderr=subprocess.STDOUT, **NOWIN,
-                                           **({} if os.name == "nt" else {"start_new_session": True}))
-                CHILDREN.append(process)
-                _execution_patch(key, status="running", started_at=time.time(), last_progress=time.time())
-                execution_notice(key, "▶ 回归/复测实际开始", "已启动测试入口；运行编号：" + run_id + "\n日志：" + logfile)
-                deadline = time.monotonic() + max(60, min(7200, int(job.get("timeout") or 3600)))
-                next_report = time.monotonic() + 120
-                while True:
-                    try:
-                        code = process.wait(timeout=1)
-                        break
-                    except subprocess.TimeoutExpired:
-                        if time.monotonic() >= deadline:
-                            # 不杀结果未知的外部任务，不在旁边再启动一轮。
-                            raise TimeoutError("测试入口超时，进程可能仍在执行；禁止自动重跑，请核对原运行编号。")
-                        if time.monotonic() >= next_report:
-                            _execution_patch(key, last_progress=time.time())
-                            execution_notice(key, "⏳ 回归/复测执行中", "运行编号：" + run_id + "\n日志：" + logfile + "\n尚未取得最终结果，继续等待。")
-                            next_report = time.monotonic() + 120
-            with open(resultfile, encoding="utf-8") as f:
-                result = json.load(f)
-            summary = result.get("summary") if isinstance(result, dict) else None
-            if not isinstance(summary, str) or not summary.strip():
-                raise ValueError("执行入口未提供有效结果摘要")
-            total, passed = result.get("total"), result.get("passed")
-            evidence = result.get("evidence") or []
-            if not isinstance(evidence, list) or not all(isinstance(p, str) for p in evidence):
-                raise ValueError("执行证据清单格式无效")
-            paths = [os.path.abspath(os.path.join(jobdir, p)) for p in evidence]
-            if result.get("status") == "passed":
-                if (code != 0 or type(total) is not int or type(passed) is not int or total <= 0
-                        or passed != total or not paths or not all(os.path.isfile(p) for p in paths)
-                        or result.get("environment") != "test" or not result.get("version_start")
-                        or result.get("version_start") != result.get("version_end")):
-                    raise ValueError("不能确认通过：退出码、测试数量、真实报告或同版本证据不完整")
-                state, title = "completed", "✅ 回归/复测已通过"
-            elif result.get("status") == "blocked":
-                state, title = "waiting_dependency", "⚠️ 回归/复测存在阻塞"
-            else:
-                # 失败只提醒本人排查，不能据此直接认定接口缺陷或发原群。
-                state, title = "failed", "⚠️ 回归/复测待排查"
-            run = dict((_commit_load().get(key) or {}).get("execution_run") or {})
-            run.update(exit_code=code, result_status=result.get("status"), total=total, passed=passed, version_start=result.get("version_start"), version_end=result.get("version_end"))
-            _execution_patch(key, execution_run=run)
-            commitment_update(key, title, summary, evidence=[logfile, resultfile] + paths, status=state)
-            execution_notice(key, title, summary + "\n运行编号：" + run_id + "\n日志：" + logfile + "\n结果先排平台、数据和合同，确认接口问题后再按授权汇报原群。")
-            if state == "completed" and event.get("conversation_id") in CFG.get("groups", {}) and can_reply(event["conversation_id"]):
-                stage_draft(event, summary + f"\n本轮 {passed}/{total} 通过；运行编号：{run_id}。", "本轮实际测试全部通过，准备结果汇报，仍需本人确认发送。")
-        except (OSError, ValueError, TypeError, TimeoutError) as ex:
-            state = "interrupted" if isinstance(ex, TimeoutError) else "failed"
-            commitment_update(key, "执行异常", str(ex), evidence=[logfile], status=state)
-            execution_notice(key, "⚠️ 回归/复测执行异常", str(ex) + "\n日志：" + logfile + "\n未计通过，不自动重跑。")
-        finally:
-            if process is not None and process.poll() is not None:
-                if process in CHILDREN:
-                    CHILDREN.remove(process)
-        return True
 
 
-def external_execution_progress(value):
-    """已有值守助手回传真实进度；只登记，不另起执行进程、不发送原群。"""
-    if not isinstance(value, dict):
-        raise ValueError("执行回执格式无效")
-    key, state = value.get("task_key"), value.get("status")
-    rec = _commit_load().get(key) or {}
-    if not rec.get("execution_kind") or rec.get("execution_backend") != "external":
-        raise ValueError("未找到交由外部值守的执行任务")
-    if state not in ("running", "completed", "waiting_dependency", "waiting_resources", "failed", "interrupted"):
-        raise ValueError("执行状态无效")
-    detail = value.get("detail")
-    if not isinstance(detail, str) or not detail.strip():
-        raise ValueError("请提供实际进展或阻塞说明")
-    run = dict(rec.get("execution_run") or {})
-    if state in ("running", "completed"):
-        run_id, log_path = value.get("run_id"), value.get("log")
-        if not run_id or not isinstance(log_path, str) or not os.path.isfile(log_path):
-            raise ValueError("实际运行需提供运行编号与已存在的日志")
-        run.update(id=str(run_id), log=log_path, environment=value.get("environment"))
-    evidence = value.get("evidence") or []
-    if not isinstance(evidence, list) or not all(isinstance(p, str) and os.path.isfile(p) for p in evidence):
-        raise ValueError("执行证据不存在或格式无效")
-    if state == "completed":
-        total, passed = value.get("total"), value.get("passed")
-        if (type(total) is not int or type(passed) is not int or total <= 0 or passed != total
-                or type(value.get("exit_code")) is not int or value.get("exit_code") != 0 or not evidence or value.get("environment") != "test"
-                or not value.get("version_start") or value.get("version_start") != value.get("version_end")):
-            raise ValueError("不能确认通过：数量、退出码、同版本或报告不完整")
-        run.update(total=total, passed=passed, exit_code=0, version_start=value["version_start"], version_end=value["version_end"])
-    _execution_patch(key, execution_run=run, last_progress=time.time())
-    commitment_update(key, "值守执行回执", detail, evidence=evidence, status=state)
-    status_event("值守执行回执", detail, event=rec.get("event"))
-    return _commit_load()[key]
 
 
-def check_executions(now=None):
-    now = now or time.time()
-    for rec in execution_snapshot():
-        state = rec.get("status")
-        age = now - rec.get("queued_at", now)
-        stalled_external = rec.get("execution_backend") == "external" and state == "running" and now - rec.get("last_progress", now) >= 600
-        overdue = stalled_external or (state == "committed" and age >= 120) or (state in ("waiting_resources", "waiting_dependency", "failed", "interrupted") and age >= 7200)
-        interval = 600 if state in ("committed", "running") else 7200
-        if overdue and now - rec.get("last_notice", 0) >= interval:
-            execution_notice(rec["task_key"], "⚠️ 执行任务仍未完成", "状态：" + state + "\n" + str(rec.get("next_action") or "请核对原运行与前置，不能把消息已回复视为测试完成。"))
 
 
-def execution_worker():
-    while SERVICE_RUNNING and not UPDATE_EXIT.is_set():
-        for rec in execution_snapshot():
-            if rec.get("status") == "committed" and rec.get("execution_backend") == "local":
-                try:
-                    run_execution(rec["task_key"])
-                except Exception as ex:
-                    commitment_update(rec["task_key"], "执行通道异常", type(ex).__name__, status="failed")
-                    execution_notice(rec["task_key"], "⚠️ 执行通道异常", "任务已保留，需要检查执行入口；未计通过。")
-        UPDATE_EXIT.wait(2)
 
 
 def _open_load():
@@ -1666,26 +1274,47 @@ def mark_withdrawn(e, reason="消息已撤回，无法继续处理"):
     status_event("消息已撤回", reason, event=e)
 
 
+TASK_ID = re.compile(r"\b[A-Z][A-Z0-9]{1,15}-\d+(?:-\d+)?\b")   # 单号：需求 / 缺陷 / 任务编号这类「大写字母-数字」的写法，各项目通用
+
+
+def _quoted_id(e):
+    q = (e or {}).get("quoted_message") or (e or {}).get("quotedMessage") or {}
+    return q.get("message_id") or q.get("openMessageId") or q.get("messageId") or q.get("msgId") if isinstance(q, dict) else None
+
+
+REPLIED = {}   # 本人（或代本人值守）已引用回复过的原消息 ID → 时间；AI 草稿晚于本人回复生成时据此直接作废（11-23 #USbGg）
+
+
+def already_replied(e):
+    t = REPLIED.get((e or {}).get("message_id"))
+    return bool(t and time.time() - t < 6 * 3600)
+
+
 def close_by_conversation(cid, reply_event=None):
-    """本人亲自回复后只关闭对应事项，不能因同群另一条消息误关全部事项。"""
+    """本人（或代本人值守的程序，用本人身份发的）在原会话回复后，关闭对应事项（11-23 用户：已处理的不能还挂在草稿待发）。
+    对应关系：① 引用了那条消息；② 没引用，但回复里提到的单号（COMIC-1999-092 / TICKET-845 / OPS-…）和某件事一样。
+    同群只是说了别的话、对不上任何一件，就都保留，不误关。助手自己发出去的草稿（OUT 里有）在 relevant 里已排除，不会走到这里。"""
     items = [(no, x) for no, x in _open_load().items() if x.get("cid") == cid]
     if not items:
         return
-    quoted_id = ((reply_event or {}).get("quoted_message") or {}).get("message_id")
+    quoted_id = _quoted_id(reply_event)
     if quoted_id:
-        items = [(no, x) for no, x in items if (x.get("event") or {}).get("message_id") == quoted_id]
+        REPLIED[quoted_id] = time.time()
+    if quoted_id:
+        hit = [(no, x) for no, x in items if (x.get("event") or {}).get("message_id") == quoted_id]
     else:
-        # 同群发言不等于处理了这个事项；没有引用关联就保留，避免误关其他待决事项。
-        return
-    if (reply_event or {}).get("messageAiSendFlag"):
-        status_event("工具回复待核对", "检测到其他工具发出的回复，未当成本人确认、未关闭待办", event=reply_event)
-        return
-    for no, x in items:
+        hit = []
+    if not hit:
+        ids = set(TASK_ID.findall(str((reply_event or {}).get("content") or "")))
+        q = (reply_event or {}).get("quoted_message") or (reply_event or {}).get("quotedMessage") or {}
+        ids |= set(TASK_ID.findall(str(q.get("content") or "") if isinstance(q, dict) else ""))
+        if ids:
+            hit = [(no, x) for no, x in items if ids & set(TASK_ID.findall(str((x.get("event") or {}).get("content") or x.get("what") or "")))]
+    for no, x in hit:
         f, _ = draft_by_no(no)
         open_close(no, "你已在该会话回复", reply_event)
         if f and os.path.exists(f):
             os.remove(f)
-
 
 # ---- 表情（v2.6）：原生表情回应 + 内置表情包（ChineseBQB）
 STICKERS = os.path.join(MEMDIR, "表情包.json")     # {名字: 图片地址}
@@ -1918,9 +1547,6 @@ def ask_ai(no, question):
         notify(f"❓ 没找到 {no}", "可能已经处理完了。发「待回复」看还有哪些。"); return
     ev = (d or {}).get("event") or x.get("event") or {}
     JOB_CONTEXT.event = ev
-    if execution_requested(question):
-        enqueue_owner_execution({**ev, "message_id": "request-" + str(time.time_ns())}, question)
-        return
     verify = verification_requested(question)
     images, media_errors = image_inputs([ev])
     if media_errors:
@@ -1937,9 +1563,9 @@ def ask_ai(no, question):
               f"## 原消息\n{json.dumps(ev, ensure_ascii=False)}\n\n## 现在的草稿\n{draft or '（还没有）'}\n\n## 之前的判断依据\n{(x or {}).get('reason') or (d or {}).get('reason') or ''}\n\n"
               f"## 之前问过的\n{json.dumps(qa, ensure_ascii=False)}\n\n## 我的问题\n{question}")
     if verify:
-        prompt += ("\n\n## 本人要求实际核查\n现在执行职责范围内的只读接口核验，不能只答复计划；用自己的既有QA客户端，登录信息仅留内存，禁止读取、打印或复制凭据。"
+        prompt += ("\n\n## 本人要求实际核查\n现在用你已有的工具做职责范围内的只读核查，不能只答复计划；登录信息仅留内存，禁止读取、打印或复制凭据。"
                    "先核对执行环境是否允许联网；DNS失败不能直接判成本机网络故障。对照研发示例逐项核对请求参数，只用本次真实响应下结论，注明时间、版本、范围和未完成项。"
-                   "证据只写当前助手目录的 logs/verification 下，不改平台配置或用例，不创建、删除业务数据，不执行付费或正式服写操作。"
+                   "证据只写当前助手目录的 logs/verification 下，不改任何配置，不创建、删除业务数据，不执行付费或正式服写操作。"
                    "不提交、不推送，不发原群，不重启服务；需要额外授权就说明卡在哪。完成后依然只输出上述JSON，由助手向本人汇报。")
         raw = ai_exec(prompt, timeout=600, images=images or None, verify=True)
     else:
@@ -2002,7 +1628,7 @@ def answer_user(e, question):
                 pass
     except OSError:
         pass
-    context = {"status": status_snapshot(), "pending": _open_load(), "execution": _commit_load()}
+    context = {"status": status_snapshot(), "pending": _open_load()}
     try:
         import console
         if console.A:
@@ -2019,7 +1645,7 @@ def answer_user(e, question):
         return
     prompt = ('本人正在调试通知群直接和你对话。先给结论，再逐项回答，简体中文；无需本人写#编号或固定口令。'
               '按结论、详情、下一步分段，列表每项一件事；要求详细时完整写原因、之前的协调和现在结果，不限制行数，不漏子问题。'
-              '结合引用、近期问答及真实发送/执行记录。仅当问题涉及发送或验收时说明各自状态，不要每条机械附“已回复/验收完成”。不能把客户端QA职责转给接口QA。'
+              '结合引用、近期问答及真实发送/执行记录。仅当问题涉及发送或验收时说明各自状态，不要每条机械附“已回复/验收完成”。不要把别的角色的职责揽到自己身上，也不要把自己的推给别人。'
               '只在确实缺少必要信息时问一个具体问题，不得只回“收到”“请写编号”。'
               '只输出JSON：{"answer":"给本人的正常答复"}。不能假称已执行、已发送、已修好或验收通过；'
               '本次不得发其他群、改配置、改状态、修改文件、重启或推送。凭据不读取不打印。'
@@ -2076,9 +1702,13 @@ def quoted_action_nos(quoted):
 def command_text(e):
     """确认可以只引用机器人消息；正文显式编号优先，引用多事项时不猜。"""
     text = re.sub(r'^(?:<@[^>]+>|@[^\s]+)\s*', '', str(e.get("content") or "").strip()).strip()
+    # 口语说法当「不归我」（11-23：本人引用提醒回「和我无关，无需回复」，被当成追问，没关掉这件事）
+    m = re.match(r"^(#[A-Za-z0-9]{3,8}\s*)?((?:和我|与我)无关|不关我的?事|无需回复|不用回复?|不需要回复?|不用管|不是我的事?)(.*)$", text, re.S)
+    if m:
+        text = (m.group(1) or "") + "不归我：" + (m.group(2) + m.group(3)).strip()
     if re.search(r"#[A-Za-z0-9]{3,8}", text):
         return text
-    if not re.match(r"(?:(?:全部(?:可以)?发送|可以(?:发送|发)?|发送|发出|发吧|发|不发|不归我|手动已处理)(?=$|[\s，,。！!：:])|(?:改成|暂存|问)[：:])", text):
+    if not re.match(r"(?:(?:全部(?:可以)?发送|可以(?:发送|发)?|发送|发出|发吧|发|不发|不归我|手动已处理|已处理|处理了|处理完了)(?=$|[\s，,。！!：:])|(?:改成|暂存|问)[：:])", text):
         return text
     q = e.get("quoted_message") or e.get("quotedMessage") or {}
     quoted = str(q.get("content") or q.get("text") or "")
@@ -2125,9 +1755,6 @@ def command(e):
     text = command_text(e)
     if text is None:
         return
-    if execution_requested(text):
-        enqueue_owner_execution(e, text)
-        return
     if text == "升级":
         threading.Thread(target=perform_update, daemon=True).start(); return
     if re.fullmatch(r"(一键)?清空(待回复)?", text):
@@ -2140,7 +1767,7 @@ def command(e):
         if f and os.path.exists(f):
             os.remove(f)
         return
-    m = re.match(r"(#[A-Za-z0-9]{3,8})\s*手动已处理(?:[：:]\s*(.*))?$", text, re.S)
+    m = re.match(r"(#[A-Za-z0-9]{3,8})\s*(?:手动已处理|已处理|处理了|处理完了)(?:[：:]\s*(.*))?$", text, re.S)   # 钉钉里说「#编号 已处理」也行（11-23）
     if m:
         f, _ = draft_by_no(m.group(1))
         note = (m.group(2) or "").strip() or "已由本人线下处理"
@@ -2193,14 +1820,6 @@ def command(e):
                 if st:
                     send_sticker(d["event"], st)
                 audit(no, d["event"], d["draft"], text, sticker=st, reason=d.get("reason", ""))
-                # 发送成功只代表草稿已获准并发出；对应的 QA 任务进入承诺执行态，
-                # 后续由值守继续核验、留证和回执，不再要求本人重复下第二条指令。
-                try:
-                    commitment_start(no, d["draft"], e)
-                except Exception as ex:
-                    # 原会话已经发送成功，不能把本地承诺落盘失败误报成“消息发送失败”。
-                    log("承诺记录失败", no, repr(ex))
-                    notify("⚠️ 承诺记录失败", f"{no} 已发出，但本地 commitments.json 写入失败：{repr(ex)[:200]}；请保留这条确认消息，稍后补记。")
                 # 先写“已处理”和发送留痕，再删草稿；这样旧版/异常进程不会把已发消息重新显示在“要你判断”。
                 open_close(no, "已按你确认发出：" + d["draft"][:100])
                 if os.path.exists(f):
@@ -2399,21 +2018,7 @@ def relevant(e):
             return False                                                   # 助手发的表情包（以本人身份发），不算本人亲自回复
         mine = re.sub(r"\s+", "", str(e.get("content") or ""))
         if not any(mine and (mine in k or k in mine) for k, t in OUT.items() if time.time() - t < 900):
-            quote = (e.get("quoted_message") or {}).get("message_id")
-            if quote and any(_event_id(x.get("event")) == quote for x in _open_load().values()):
-                # 事件流可能不带发送来源；查原消息，DWS发送不能冒充本人亲自确认。
-                r = run([DWS, "chat", "+messages-mget", "--msg-ids", e["message_id"],
-                         "--no-reactions", "--no-threads", "--format", "json"], timeout=30)
-                try:
-                    data = json.loads(r.stdout)
-                    rows = data.get("messages") or []
-                    if r.returncode or data.get("complete") is not True or data.get("failures") or not rows:
-                        raise ValueError("未取得完整回复来源")
-                    e = {**e, "messageAiSendFlag": rows[0].get("messageAiSendFlag")}
-                except (ValueError, TypeError):
-                    status_event("回复来源待核对", "无法确认是本人亲自回复，原待办保留", event=e)
-                    return False
-                close_by_conversation(e.get("conversation_id"), e)
+            close_by_conversation(e.get("conversation_id"), e)            # 本人或代本人值守用本人身份回了：对得上的事项移到「已处理」
         return False
     if not sender or "机器人" in sender:
         return False
@@ -2705,8 +2310,8 @@ def decide(batch):  # noqa: C901
               '"memory": {"负责人": [{"事项": "", "负责人": "", "在哪找": ""}], "问题处理": [{"问题": "", "处理": "", "谁": "", "结论": ""}]}}\n'
               "正文或引用里提到本人的姓名、钉钉 mention 元数据、原始 <@id> 都需判断；不能仅因还 @ 了别人就忽略。未知 ID 只表示要判断，不能猜成本人。mine=true 只在确实找本人且职责明确时；拿不准就 mine=false、action=escalate，不能 ignore。"
               "risk=low 只用于：回「收到，谢谢」、转述记忆里已有的明确信息；其余一律 high。"
-              "硬规则（违反就是错）：1）已明确 @ 我且属于 QA 接口自动化、回归、合同核验、测试服或正式服验证的消息，直接按 QA 职责承接并核实；不得因为消息是在派活、安排验证或涉及线上验证，就泛化成必须本人拍板。"
-              "2）先排除测试平台、用例脚本、合同、测试数据和前置变量问题；能在 QA 侧修正的先修正并重跑，不能修正时到对应群真实 @ 研发、项目助手 或数据负责人，说明已核实内容、缺什么和下一步，并登记跟进。"
+              "硬规则（违反就是错）：1）已明确找我、且属于工作手册「我的职责范围 / 按角色」里写明的事，直接按职责承接并核实；不要因为消息是在派活或安排工作，就一律当成必须本人拍板。"
+              "2）核实时先排除自己这边能排除的原因（自己的工具、数据、配置），能自己修正的先修正；需要别人配合时，到对应群真实 @ 对方，说明已核实的内容、缺什么和下一步。"
               "3）只有新需求、权限/资源、排期承诺、产品取舍或只有本人能执行的动作，才 escalate 给本人；消息内容不在职责范围内时才 escalate 或 ignore。"
               "4）只回答职责范围内、记忆或待办里有明确依据的事实性问题；没有依据先核实，不凭空给结论。"
               "5）mine=false 时 action 只能是 escalate 或 ignore，群里不回任何话（包括「收到」「我确认一下」），由我自己确认是不是归我。"
@@ -2858,9 +2463,8 @@ def escalation_draft(batch, decision):
     if text:
         return text
     e = batch[-1]
-    # 泛化的“派活/要不要接”没有事实性回复可起草，不调用 AI 只留下拍板事项；
-    # QA 验证、回归、合同和环境问题才需要生成可审核的安全草稿。
-    if not any(k in str(e.get("content") or "") for k in ("接口", "回归", "合同", "测试服", "正式服", "验证", "复测")):
+    # 只给明确找本人、且不是排期 / 需求 / 权限 / 承诺这类要本人拍板的事补一版安全草稿（各角色通用，不再按 QA 关键词判断，11-23）。
+    if decision.get("mine") is not True or re.search(r"排期|需求|权限|资源|承诺|拍板|取舍|分配|派活|接活|承接", str(decision.get("reason") or "")):
         return ""
     prompt = ("你是群消息助手，只负责给下面这条消息起草一段供本人审核的回复。只输出一行 JSON："
               '{"draft": "回复正文"}\n'
@@ -2880,12 +2484,10 @@ def escalation_draft(batch, decision):
     # 避免事项只停在「要你判断」而让本人从空白开始写。
     if not text:
         content = str(e.get("content") or "")
-        qa_task = any(k in content for k in ("接口", "回归", "合同", "测试服", "正式服", "验证", "复测"))
-        if e.get("conversation_id") in CFG.get("groups", {}).keys() and qa_task:
-            text = ("已收到，我会按 QA 范围核对本次验证项和现网约束。\n"
-                    "先排除平台、合同、数据和前置变量问题；需要研发或数据侧配合的，我会在对应群说明核实结果和缺口。\n"
-                    "证据闭环后再同步结论。")
+        if e.get("conversation_id") in CFG.get("groups", {}).keys() and content:
+            text = "收到，我先核对一下我这边负责的部分，有结论或需要大家配合的地方再在这里说。"
     return text[:2000]
+
 
 
 def handle(batch):
@@ -2900,6 +2502,8 @@ def handle(batch):
     ats = re.findall(r"@([^\s@，,：:;；\n]+)", str(e.get("content") or ""))
     if ats and not event_mentions_me(e) and not re.search(r"<@[^>]+>", event_text(e)) and not any(x in ("所有人", "全体成员") for x in ats):  # 未知 <@id> 不再误判为别人；正文/引用提到本人仍进入判断
         log("别人之间的对话，不回", e.get("sender"), ats[:3]); return "别人之间的对话，不回复、不生成草稿"
+    if already_replied(e):                                             # 本人已经引用回复过这条：不再出草稿 / 提醒
+        log("本人已回复过，不再出草稿", e.get("sender")); return "本人已在原会话回复，不再生成草稿"
     if d.get("action") == "ignore":
         return "不回复：" + (d.get("reason") or "按职责和群规则跳过")
     brief = event_context(e) + f"\n原消息：{e.get('sender')}：{str(e.get('content'))[:200]}"
@@ -3074,7 +2678,6 @@ def supervisor():
         if SERVICE_RUNNING:
             sync_listeners()
             check_owner_commands()
-            check_executions()
             import_notification_outbox()
         now = time.time()
         for tag, (args, _) in ([] if SERVICE_RUNNING else list(LISTENER_SPECS.items())):
@@ -3358,10 +2961,6 @@ def check():
 
 
 def main():
-    if len(sys.argv) >= 2 and sys.argv[1] == "watch":
-        if sys.argv[2:] not in ([], ["--once"], ["--auto"]):
-            raise SystemExit("用法：python agent.py watch [--once]")
-        return watch(once="--once" in sys.argv[2:], auto="--auto" in sys.argv[2:])
     if len(sys.argv) >= 2 and sys.argv[1] == "setup-notify":
         opt = dict(zip(sys.argv[2::2], sys.argv[3::2]))                   # --group 群名/cid  --webhook 地址  --secret SEC…
         setup_notify(group=opt.get("--group", ""), webhook=opt.get("--webhook", ""), secret=opt.get("--secret", "")); return
@@ -3405,7 +3004,6 @@ def main():
     global SERVICE_RUNNING
     SERVICE_RUNNING = True
     recover_owner_commands()
-    recover_executions()
     update_receipt()
     if os.path.exists(STATUS_LOG):
         cutoff = (dt.datetime.now() - dt.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
@@ -3421,8 +3019,6 @@ def main():
         for e in json.load(open(queue_file, encoding="utf-8")):
             Q.put(e); SEEN.add(e.get("message_id"))
         os.remove(queue_file)
-    open_report_window()
-    threading.Thread(target=execution_worker, daemon=True).start()
     sync_listeners()
     workers = [threading.Thread(target=worker, daemon=True) for _ in range(max(1, int(CFG["workers"])))]
     for w in workers:
@@ -3475,7 +3071,7 @@ def main():
             for w in workers:
                 w.join(timeout=1)
             # 已开始的判断完成后再退出；未开始的批次落盘，重启后继续。
-            while BUSY["n"] or OWNER_ACTIVE["message_id"] or any(x.get("execution_backend") == "local" and x.get("status") in ("starting", "running") for x in execution_snapshot()):
+            while BUSY["n"] or OWNER_ACTIVE["message_id"]:
                 time.sleep(1)
             _stop_children()
             pending = []
@@ -3549,7 +3145,7 @@ if os.path.exists(idf):
     ids = json.load(open(idf, encoding="utf-8"))
     for p in (ids.get("people") or []) if isinstance(ids, dict) else ids:   # identities.json 顶层是 {"people": [...]}；以前直接遍历拿到的是键名，预填一直是空的（v2.7 修）
         if isinstance(p, dict) and p.get("status") == "active" and p.get("roles"):
-            seed.append({"事项": "、".join(ROLE_CN.get(r, r) for r in p["roles"]) + " 相关", "负责人": p["display_name"], "在哪找": "协作群 / 测试群", "依据": "协作库 identities.json"})
+            seed.append({"事项": "、".join(ROLE_CN.get(r, r) for r in p["roles"]) + " 相关", "负责人": p["display_name"], "在哪找": "项目协作群", "依据": "协作库 identities.json"})
 for f in glob.glob(os.path.join(COORD, "features", "*", "feature.yaml")):
     text = open(f, encoding="utf-8", errors="ignore").read()
     title = re.search(r"^title:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)
@@ -3984,7 +3580,8 @@ loginctl enable-linger $USER    # 可选：不登录桌面也运行（需要管�
     "回归请求"
    ],
    "可以直接回答（有依据时）": [
-    "回归结果、用例覆盖：按最近一轮回归记录回答"
+    "回归结果、用例覆盖：按最近一轮回归记录回答",
+    "明确 @ 我、属于接口自动化 / 回归 / 合同核验 / 测试服验证的安排：直接按职责承接并核实，不要因为是派活就一律交给本人"
    ],
    "一律交给本人": [
     "要不要跑回归、什么时候跑",
@@ -3993,6 +3590,10 @@ loginctl enable-linger $USER    # 可选：不登录桌面也运行（需要管�
    "推荐监控的群": [
     "项目协作群",
     "测试群"
+   ],
+   "处理原则": [
+    "失败先排除测试平台、用例脚本、合同、测试数据和前置变量问题；能在测试侧修正的先修正并重跑",
+    "不能自己修正的，到对应群真实 @ 研发或数据负责人，说明已核实的内容、缺什么和下一步"
    ]
   },
   {
@@ -4446,10 +4047,41 @@ def state():
             "last_event": A["LAST_EVENT"].get("summary", ""), "judge": judge, "send": send, "done": done[:CLOSED_N],
             "today_done": sum(1 for x in done if x.get("done", "").startswith(time.strftime("%m-%d"))),
             "queue": A["Q"].qsize() + A["READY"].qsize(), "processing": A["BUSY"]["n"],
-            "owner": A["owner_snapshot"](), "executions": A["execution_snapshot"](30),
+            "owner": A["owner_snapshot"](),
             "notifications": [{**x, "display_text": notification_body(x.get("text", ""))}
                               for x in A["notification_snapshot"]()],
             "time": time.strftime("%H:%M:%S")}
+
+
+def chat(limit=80):
+    """调试群对话（11-23 用户要求）：你在钉钉调试群说的话 + 机器人的回复 / 通知，按时间排成一条对话，和钉钉里看到的一致。"""
+    rows = []
+    for r in (A["owner_snapshot"]().get("recent") or []):
+        rows.append({"me": True, "t": r.get("received", 0), "text": r.get("question", ""), "stage": r.get("stage", ""),
+                     "error": r.get("error", "")})
+        if r.get("answer"):                     # 机器人对这条的答复（存在本人消息记录里），作为机器人一条接在后面
+            rows.append({"me": False, "t": r.get("finished") or r.get("updated") or r.get("received", 0) + 1, "title": "答复", "text": r["answer"], "delivered": None, "_ans": r.get("message_id")})
+    for n in A["notification_snapshot"](limit):
+        try:
+            t = time.mktime(time.strptime(str(n.get("time", ""))[:19], "%Y-%m-%dT%H:%M:%S"))
+        except ValueError:
+            t = n.get("recorded", 0)
+        rows.append({"me": False, "t": t, "title": n.get("title", ""), "text": n.get("text", ""), "delivered": n.get("delivered")})
+    answered = {r["text"].strip() for r in rows if r.get("_ans")}
+    rows = [r for r in rows if r.get("_ans") or r["me"] or r["text"].strip() not in answered]   # 同一条答复在通知里也有一份时只留一条
+    rows.sort(key=lambda x: x["t"])
+    for r in rows:
+        r["time"] = time.strftime("%m-%d %H:%M", time.localtime(r["t"])) if r["t"] else ""
+    return rows[-limit:]
+
+
+def say(text):
+    """在操作台输入框发消息：以本人身份发到钉钉调试群，再由监听收到、按调试群里一样的流程处理——钉钉和网页看到的是同一段对话。"""
+    text = (text or "").strip()
+    if not text or not A["CFG"].get("notify_group"):
+        return "内容为空或没配提醒群"
+    r = A["run"]([A["DWS"], "chat", "+messages-send", "--group", A["CFG"]["notify_group"], "--text", text, "--yes", "--format", "json"], timeout=60)
+    return "已发到调试群" if re.search(r'"(success|ok)":\s*true', getattr(r, "stdout", "") or "") else "发送失败：" + (getattr(r, "stderr", "") or getattr(r, "stdout", ""))[:120]
 
 
 def thread(no, x=None):
@@ -4620,23 +4252,13 @@ class H(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         if u.path == "/":
             return self._send(200, PAGE, "text/html; charset=utf-8")
+        if u.path == "/api/reports":
+            rows = [n for n in A["notification_snapshot"](5000) if re.search(r"每日汇报|日报|每日总结|今日总结", str(n.get("title") or ""))]
+            return self._send(200, json.dumps([{"time": str(n.get("time", ""))[:16].replace("T", " "), "title": n.get("title"), "text": n.get("text")} for n in rows[:60]], ensure_ascii=False))
+        if u.path == "/api/chat":
+            return self._send(200, json.dumps(chat(), ensure_ascii=False))
         if u.path == "/api/state":
             return self._send(200, json.dumps(state(), ensure_ascii=False))
-        if u.path == "/api/execution":
-            key = (urllib.parse.parse_qs(u.query).get("key") or [""])[0]
-            rec = A["_commit_load"]().get(key) or {}
-            if not rec.get("execution_kind"):
-                return self._send(404, "{}")
-            output = ""
-            path = (rec.get("execution_run") or {}).get("log")
-            if path:
-                try:
-                    with open(path, "rb") as f:
-                        f.seek(max(0, os.path.getsize(path) - 30000))
-                        output = f.read().decode("utf-8", errors="replace")
-                except OSError:
-                    output = "运行日志暂不可读，请检查本机权限。"
-            return self._send(200, json.dumps({"task": rec, "output": output}, ensure_ascii=False))
         if u.path == "/api/groups":
             return self._send(200, json.dumps([{"cid": c, "name": ding_name(c, n)} for c, n in _groups().items()], ensure_ascii=False))
         if u.path == "/api/monitor":
@@ -4664,14 +4286,6 @@ class H(BaseHTTPRequestHandler):
         except ValueError:
             return self._send(400, '{"msg": "格式不对"}')
         path = urllib.parse.urlparse(self.path).path
-        if path == "/api/execution":
-            if not self._local():
-                return self._send(403, '{"msg":"只允许本机桥接调用"}')
-            try:
-                rec = A["external_execution_progress"](body)
-            except (ValueError, TypeError) as ex:
-                return self._send(400, json.dumps({"msg": str(ex)}, ensure_ascii=False))
-            return self._send(200, json.dumps({"ok": True, "status": rec["status"]}))
         if path == "/api/notifications":
             if not self._local():
                 return self._send(403, '{"msg":"只允许本机桥接调用"}')
@@ -4737,6 +4351,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"ok": True, "no": no}, ensure_ascii=False))
         if path != "/api/act":
             return self._send(404, "{}")
+        if urllib.parse.urlparse(self.path).path == "/api/say":
+            return self._send(200, json.dumps({"msg": say(body.get("text", ""))}, ensure_ascii=False))
         no, action, text = body.get("no"), body.get("action"), body.get("text", "")
         if action == "ask":                          # 问 AI 要几十秒，后台跑，答案回来后卡片自动更新
             threading.Thread(target=act, args=(no, action, text), daemon=True).start()
@@ -4828,6 +4444,12 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1f
 .tag{display:inline-block;border-radius:99px;padding:0 8px;font-size:11.5px;font-weight:600}.t-red{background:var(--red-soft);color:var(--red)}.t-ok{background:var(--green-soft);color:var(--green)}
 .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .dtabs{display:flex;gap:6px;margin:0 0 10px}.draft.sent{background:var(--green-soft)}.draft.sent::before{content:"已发出";color:var(--green)}.t-gray{background:var(--soft);color:var(--muted)}
+.chat-panel{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--surface);transform:translateX(100%);transition:transform .22s;display:flex;flex-direction:column;z-index:11;box-shadow:none}
+.chat-panel.on{transform:none;box-shadow:-12px 0 40px rgba(10,20,45,.18)}.chat-panel .pb{flex:1;overflow:auto;padding:16px 20px;background:var(--soft)}
+.cmsg{display:flex;margin:0 0 12px}.cmsg.me{justify-content:flex-end}.cmsg .b{max-width:86%;border-radius:12px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);white-space:pre-wrap;word-break:break-word}
+.cmsg.me .b{background:var(--blue);color:#fff;border-color:var(--blue)}.cmsg .w{font-size:11.5px;color:var(--muted);margin-bottom:3px}.cmsg.me .w{color:rgba(255,255,255,.8)}.cmsg .tt{font-weight:600;margin-bottom:2px}
+.readable p,.tx p{margin:0 0 4px}.mdh{font-weight:700;margin:2px 0 6px}.mdl{margin:2px 0 6px;padding-left:18px}.mdl li{margin:1px 0}.mention{color:var(--blue);font-weight:600}.readable a,.tx a,.cmsg a{color:inherit;text-decoration:underline}
+.foot{text-align:center;color:var(--faint);font-size:12px;padding:6px 0 10px}
 .empty{color:var(--faint);text-align:center;padding:48px 10px}.empty .big{font-size:30px;display:block;margin-bottom:6px}
 .mask{position:fixed;inset:0;background:rgba(10,18,35,.25);opacity:0;pointer-events:none;transition:.2s;z-index:9}.mask.on{opacity:1;pointer-events:auto}
 aside{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--surface);box-shadow:none;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:10}
@@ -4858,22 +4480,24 @@ dialog{max-width:520px;width:calc(100% - 32px);border:1px solid var(--border);bo
 @media(max-width:980px){.ownerbar,.toolbar{margin:12px 14px 0}.ownerbar summary{flex-wrap:wrap}.toolbar{flex-wrap:wrap}.toolbar input{max-width:none}header{padding:12px 14px;gap:10px}.chips{gap:5px}.owner-list{max-height:250px}.ownerbar summary .sp{flex-basis:100%;margin-left:20px}}
 </style></head><body>
 <header><div class="brand"><span class="logo">群</span>操作台</div><div class="chips" id="stat"><span class="chip">连接中…</span></div><span class="sp"></span>
-<button class="btn sm" onclick="openMonitor()">监听设置</button><button class="btn sm" id="notif" style="display:none">🔔 开启桌面通知</button><span class="ver" id="ver"></span></header>
-<details class="ownerbar" id="ownerTray"><summary><b>你的消息</b><span id="ownerCount" class="tag t-gray">读取中</span><span class="sp">调试群提问的接收、处理和回复记录</span></summary><div id="ownerList" class="owner-list"></div></details>
-<details class="ownerbar" id="notificationTray"><summary><b>机器人通知</b><span id="notificationCount" class="tag t-gray">读取中</span><span class="sp">调试群回执与通知；投递成功不代表任务完成</span></summary><div id="notificationList" class="owner-list"></div></details>
-<details class="ownerbar" id="executionTray" open><summary><b>执行任务</b><span id="executionCount" class="tag t-gray">读取中</span><span class="sp">接口回归与复测；回复和实际执行分开记录</span></summary><div id="executionList" class="owner-list"></div></details>
+<button class="btn sm" onclick="openChat()">💬 调试群对话</button><button class="btn sm" onclick="openReports()">📋 每日汇报</button><button class="btn sm" onclick="openMonitor()">监听设置</button><button class="btn sm" id="notif" style="display:none">🔔 开启桌面通知</button><span class="ver" id="ver"></span></header>
 <div class="toolbar"><input class="q" id="taskSearch" aria-label="搜索任务" placeholder="搜索群名、任务编号、消息或回复…" oninput="taskQuery=this.value;render()"><span>已回复与实际执行进度分别显示</span></div>
 <main>
 <section class="col c1"><div class="ch"><span class="ic">✋</span><div><h2>要你判断</h2><div class="sub">拿不准是不是归你、要不要接</div></div><span class="cnt" id="n1">0</span></div><div class="list" id="judge"></div></section>
 <section class="col c2"><div class="ch"><span class="ic">✉️</span><div><h2>草稿待发</h2><div class="sub">AI 写好了，你点头才发</div></div><span class="cnt" id="n2">0</span></div><div class="list" id="send"></div></section>
 <section class="col c3"><div class="ch"><span class="ic">✓</span><div><h2>已处理</h2><div class="sub">页面、提醒群、原会话里处理的都算</div></div><span class="cnt" id="n3">0</span></div><div class="list" id="done"></div></section>
 </main>
-<div class="mask" id="mask" onclick="closeP()"></div>
+<div class="foot">群消息助手 · 作者：梦无矶</div>
+<div class="mask" id="mask" onclick="closeP();closeChat()"></div>
+<aside id="chatPanel" class="chat-panel"><div class="ph"><span class="av" style="background:var(--blue)">群</span><div><div class="t">调试群对话</div><div class="s">和钉钉调试群里看到的同一段对话：你说的话、机器人的回复和通知</div></div><span class="sp"></span><button class="btn sm" onclick="closeChat()">关闭</button></div>
+<div class="pb" id="chatBody"><div class="empty">读取中…</div></div>
+<div class="pf"><div class="lbl">在这里说，和在钉钉调试群里说一样（会以你的身份发到调试群，比如「#编号 已处理：在钉钉里回过了」「待回复」）</div>
+<div class="askrow"><input class="q" id="chatInput" placeholder="对助手说…" onkeydown="if(event.key==='Enter'&&!event.isComposing)sendChat()"><button class="btn p" onclick="sendChat()">发送</button></div></div></aside>
 <aside id="panel"><div class="ph"><span class="av" id="pav"></span><div><div class="t" id="ptitle"></div><div class="s" id="psub"></div></div><span class="sp"></span><button class="btn sm" onclick="closeP()">关闭</button></div><div class="pb" id="pbody"></div><div class="pf" id="pfoot"></div></aside>
 <div class="toast" id="toast"></div>
 <dialog id="actionDialog"><h3 id="actionTitle"></h3><div id="actionHint"></div><textarea id="actionNote" placeholder="例如：我已在群里回复，后续等待研发提供样本"></textarea><div class="btns"><button class="btn" id="actionCancel">取消</button><button class="btn p" id="actionOK">确认</button></div></dialog>
 <dialog id="monitorDialog" aria-labelledby="monitorTitle"><div class="btns"><h3 id="monitorTitle" style="flex:1">监听设置</h3><button class="btn sm" onclick="$('monitorDialog').close()">关闭</button></div>
-<p class="monitor-hint">调整群消息助手的监听群和每日时段。所有群回复仍需你确认；Jira、定时回归及其他值守脚本按各自规则运行。</p>
+<p class="monitor-hint">调整群消息助手的监听群和每日时段。所有群回复仍需你确认；你另外配置的值守脚本按各自规则运行。</p>
 <div id="monitorError" class="monitor-error" role="status"></div>
 <label>每日监听时间 <span id="monitorTimezone" class="monitor-hint"></span></label><div class="btns"><input type="time" id="monitorStart" aria-label="监听开始时间"> 至 <input type="time" id="monitorEnd" aria-label="监听结束时间"><label style="margin:0"><input type="checkbox" id="monitorAllDay" onchange="monitorAllDayChanged()"> 全天监听</label><button class="btn p" id="monitorTimeSave" onclick="saveMonitorTime()">保存时段</button></div>
 <p class="monitor-hint">结束早于开始表示跨午夜。时间外暂停监听，操作台保持可用；已开始的任务继续完成，恢复后补读。电脑需保持开机，助手需保持运行。</p>
@@ -4890,12 +4514,15 @@ const COLORS=['#3360e6','#1c8a4a','#c27a00','#8a4fd8','#d23b3b','#0f8f9e','#c247
 function av(n){n=String(n||'?');let h=0;for(const ch of n)h=(h*31+ch.charCodeAt(0))>>>0;return `<span class="av" style="background:${COLORS[h%COLORS.length]}">${esc(n.replace(/[-_ ].*/,'').slice(-2))}</span>`}
 function toast(t){const x=$('toast');x.textContent=t;x.classList.add('on');clearTimeout(x._t);x._t=setTimeout(()=>x.classList.remove('on'),2600)}
 async function api(p,b){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),b?90000:15000);try{const r=await fetch(p+(p.includes('?')?'&':'?')+'k='+encodeURIComponent(K),b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b),signal:controller.signal}:{cache:'no-store',signal:controller.signal});if(!r.ok)throw Error(r.status===403?'操作台授权已失效，请重新打开本人链接':'助手返回错误 '+r.status);return await r.json()}finally{clearTimeout(timer)}}
-function readable(text){return esc(text).split(/\n\s*\n/).map(p=>'<p>'+p.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>').replace(/`([^`\n]+)`/g,'<code>$1</code>')+'</p>').join('')}
+// 钉钉消息里的 Markdown 按人看的样子显示（标题、加粗、链接、代码、列表、换行），不显示 ### / ** / [](…) 原样符号
+function inline(t){return t.replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>').replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/&lt;@[A-Za-z0-9_-]+&gt;/g,'<span class="mention">@某人</span>').replace(/(^|[^"=])(https?:\/\/[^\s<]+)/g,'$1<a href="$2" target="_blank" rel="noopener">$2</a>')}
+function readable(text){const L=esc(String(text||'').replace(/\r/g,'')).split('\n');let out='',list=false;
+for(const raw of L){const l=raw.trim();if(!l){if(list){out+='</ul>';list=false}continue}
+let m=l.match(/^#{1,6}\s+(.*)$/);if(m){if(list){out+='</ul>';list=false}out+='<div class="mdh">'+inline(m[1])+'</div>';continue}
+m=l.match(/^(?:[-*•]|\d+[.、)])\s+(.*)$/);if(m){if(!list){out+='<ul class="mdl">';list=true}out+='<li>'+inline(m[1])+'</li>';continue}
+if(list){out+='</ul>';list=false}out+='<p>'+inline(l)+'</p>'}
+return out+(list?'</ul>':'')}
 function execLabel(status){return {committed:'待执行',starting:'正在启动',interrupted:'执行中断待核实',running:'执行中',waiting_resources:'等待前置',waiting_dependency:'等待配合',completed:'已完成',done:'已完成',failed:'执行异常',declined:'已拒接'}[status]||status||''}
-function renderOwners(){const o=S.owner||{queued:0,running:0,needs_attention:0,recent:[]},count=$('ownerCount');count.textContent=o.running+' 处理中 · '+o.queued+' 排队'+(o.needs_attention?' · '+o.needs_attention+' 需关注':'');count.className='tag '+(o.needs_attention?'t-red':o.running||o.queued?'t-wait':'t-gray');const labels={queued:'排队中',running:'处理中',replied:'已回复',handled:'指令已处理',failed:'处理失败',interrupted:'处理中断'};const html=o.recent.map(x=>`<div class="owner-item"><span class="tag ${['failed','interrupted'].includes(x.stage)?'t-red':x.stage==='replied'?'t-ok':x.stage==='queued'||x.stage==='running'?'t-wait':'t-gray'}">${esc(labels[x.stage]||x.stage)}</span> <span class="when">${esc(x.message_time||'')}${['queued','running'].includes(x.stage)?' · 已等待 '+Math.floor(x.age_seconds/60)+' 分钟':''}</span><div class="owner-question">${esc(x.question)}</div>${x.error?`<div class="tag t-red">${esc(x.error)}</div>`:''}${x.answer?`<details><summary class="card-hint">查看答复</summary><div class="owner-answer readable">${readable(x.answer)}</div></details>`:''}</div>`).join('')||'<div class="loading-note">暂时没有调试群提问记录；新问题会显示接收和回复状态。</div>';if($('ownerList').dataset.content!==html){const expanded=new Set([...$('ownerList').querySelectorAll('.owner-item')].flatMap((el,i)=>el.querySelector('details[open]')?[i]:[]));$('ownerList').innerHTML=html;$('ownerList').dataset.content=html;[...$('ownerList').querySelectorAll('.owner-item')].forEach((el,i)=>{if(expanded.has(i)&&el.querySelector('details'))el.querySelector('details').open=true})}}
-function renderNotifications(){const rows=S.notifications||[];$('notificationCount').textContent='最近 '+rows.length+' 条';const html=rows.map(x=>`<div class="owner-item" data-id="${esc(x.notification_id)}"><span class="tag ${x.delivered?'t-ok':'t-red'}">${x.delivered?'机器人已送达':'机器人未送达'}</span> <span class="when">${esc((x.time||'').replace('T',' '))}</span><div class="owner-question">${esc(x.title)}</div>${x.group?`<div class="where">${esc(x.group)}</div>`:''}<details><summary class="card-hint">查看完整通知</summary><div class="owner-answer readable">${readable(x.display_text||x.text)}</div></details></div>`).join('')||'<div class="loading-note">暂无机器人通知记录。</div>';const el=$('notificationList');if(el.dataset.content!==html){const expanded=new Set([...el.querySelectorAll('.owner-item')].filter(x=>x.querySelector('details[open]')).map(x=>x.dataset.id));el.innerHTML=html;el.dataset.content=html;[...el.querySelectorAll('.owner-item')].forEach(x=>{if(expanded.has(x.dataset.id))x.querySelector('details').open=true})}}
-function renderExecutions(){const rows=S.executions||[];$('executionCount').textContent=rows.filter(x=>!['completed','declined'].includes(x.status)).length+' 未完成';const el=$('executionList'),html=rows.map(x=>{const run=x.execution_run||{},last=(x.history||[]).slice(-1)[0]||{};return `<div class="owner-item"><span class="tag ${x.status==='completed'?'t-ok':['failed','interrupted'].includes(x.status)?'t-red':'t-wait'}">${esc(x.execution_backend==='external'&&x.status==='committed'?'待值守执行回执':execLabel(x.status))}</span><div class="owner-question">${esc(x.commitment_text)}</div><div class="where">${esc(last.at||x.confirmed_at)} · ${esc(last.detail||x.next_action||'')}</div>${run.id?`<div class="where">运行编号：${esc(run.id)} · ${esc(run.environment)}${run.total!=null?' · '+esc(run.passed)+'/'+esc(run.total):''}</div><div class="where">日志：${esc(run.log)}</div>`:''}<button class="btn sm" onclick="openExecution('${esc(x.task_key)}')">查看进度与日志</button></div>`}).join('')||'<div class="loading-note">暂无已确认的回归或复测任务。</div>';if(el.dataset.content!==html){el.innerHTML=html;el.dataset.content=html}}
-async function openExecution(key){sel=null;const request=++panelRequest;$('mask').classList.add('on');$('panel').classList.add('on');$('ptitle').textContent='执行任务';$('psub').textContent='实际运行日志与结果';$('pbody').innerHTML=loading('正在读取执行进度…');$('pfoot').innerHTML='';try{const r=await api('/api/execution?key='+encodeURIComponent(key));if(request!==panelRequest)return;const x=r.task;$('pbody').innerHTML=`<div class="note readable"><h4>${esc(execLabel(x.status))}</h4>${readable(x.commitment_text)}${(x.history||[]).map(h=>`<p><b>${esc(h.at)} · ${esc(h.stage)}</b><br>${esc(h.detail)}</p>`).join('')}</div><div class="note"><h4>实际运行输出（末30KB）</h4><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(r.output||'尚无运行输出；任务未执行时不生成虚假日志。')}</pre></div>`}catch(e){if(request===panelRequest)$('pbody').textContent='读取失败：'+e.message}}
 function matches(c){return !taskQuery||[c.no,c.who,c.group,c.text,c.what,c.draft,c.sent,c.reason,c.why].some(x=>String(x||'').toLowerCase().includes(taskQuery.trim().toLowerCase()))}
 function bubbles(rows,source=''){return rows.map(m=>{const anchor=m.anchor||(!m.reply&&m.text&&source&&source.startsWith(String(m.text||'').slice(0,30)));return `<div class="bub${m.reply?' reply':anchor?' anchor':''}" ${anchor?'data-anchor="true"':''}>${av(m.who)}<div class="b">${m.reply||anchor?`<div class="bubble-label">${m.reply?'已发送回复':'被提及的原消息'}</div>`:''}<div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx readable">${readable(m.text)}</div></div></div>`}).join('')}
 function loading(text){return `<div role="status" aria-live="polite"><div class="loading-note">${esc(text)}</div><div class="skeleton"></div><div class="skeleton short"></div><div class="skeleton"></div></div>`}
@@ -4919,12 +4546,12 @@ async function toggleMonitorGroup(i,button){const g=monitorState.groups[i];await
 function head(c){return `<div class="top">${av(c.who)}<div><div class="who">${esc(c.who)}</div><div class="where">${esc(c.group||'')} <span class="no">${c.no}</span></div></div><span class="when">${c.overdue?'<span class="tag t-red">超时</span> ':''}${esc(c.at)}</span></div>`}
 function progress(c){const x=c.commitment||{};return(c.sent?`<details class="progress reply"><summary>已回复 · ${esc(c.sent_at||'')} · 查看原文</summary><div class="readable">${readable(c.sent)}</div></details>`:'')+(x.status?`<div class="progress exec"><b>执行进度：${esc(execLabel(x.status))}</b>${x.next_action?`<div>${esc(x.next_action)}</div>`:''}</div>`:'')}
 
-function card(c,kind){return `<div aria-busy="${pendingActions.has(c.no)}" class="card${sel===c.no?' sel':''}" onclick="openP('${c.no}')">${head(c)}<div class="txt">${esc(c.text)}</div>${progress(c)}
+function card(c,kind){return `<div aria-busy="${pendingActions.has(c.no)}" class="card${sel===c.no?' sel':''}" onclick="openP('${c.no}')">${head(c)}<div class="txt readable">${readable(c.text)}</div>${progress(c)}
 ${kind==='send'?`<div class="draft">${esc(c.draft)}</div><div class="card-hint">点开查看完整草稿和依据</div>`:(c.reason?`<div class="why">${esc(c.reason)}</div>`:'')}
 <div class="btns" onclick="event.stopPropagation()">${kind==='send'?`<button class="btn p" onclick="go('${c.no}','send')">发送</button><button class="btn" onclick="openP('${c.no}')">修改</button><button class="btn d" onclick="go('${c.no}','drop')">不发</button>`:
 `<button class="btn p" onclick="openP('${c.no}')">${c.sent?'补充回复':'回复'}</button><button class="btn" onclick="go('${c.no}','not_mine')">不归我</button>`}<button class="btn" onclick="go('${c.no}','manual_done')">已手动处理</button><button class="btn" onclick="openP('${c.no}',1)">问 AI</button></div></div>`}
 function empty(t){return `<div class="empty"><span class="big">☕</span>${t}</div>`}
-function render(){if(!S)return;const s=S;renderOwners();renderNotifications();renderExecutions();const ok=/^(\d+)\/\1$/.test(s.listeners)&&s.listeners!=='0/0';
+function render(){if(!S)return;const s=S;if($('chatPanel').classList.contains('on'))loadChat();const ok=/^(\d+)\/\1$/.test(s.listeners)&&s.listeners!=='0/0';
 $('stat').innerHTML=`<span class="chip duty d-${s.duty}" style="cursor:pointer" onclick="openH()" title="点开按群看最近消息；最近收到消息 ${esc(s.last_event_t||'无')}；${esc(s.last_event||'')}"><span class="dot"></span><b>${esc(s.duty_text)}</b> · 监听 ${s.listeners}${s.last_event_t?' · 最近 '+s.last_event_t:''}</span><span class="chip">要你判断 <b>${s.judge.length}</b></span><span class="chip">草稿待发 <b>${s.send.length}</b></span><span class="chip">队列 <b>${s.queue||0}</b> · 处理中 <b>${s.processing||0}</b></span><span class="chip">今天已处理 <b>${s.today_done}</b></span><span class="chip">${esc(s.me)} · ${s.time}</span>`;$('ver').textContent=s.version;
 $('judge').innerHTML=s.judge.filter(matches).map(c=>card(c,'judge')).join('')||empty('没有要你判断的事');$('send').innerHTML=s.send.filter(matches).map(c=>card(c,'send')).join('')||empty('没有待发的草稿');
 const dl=s.done.filter(matches).filter(d=>dfilter==='all'||d.result==='已发送');
@@ -4952,13 +4579,26 @@ async function openD(no){sel=null;const request=++panelRequest,cached=doneCache.
 const show=d=>{if(request!==panelRequest)return;$('ptitle').textContent=d.who||'';$('psub').textContent=`${d.group||''} · ${no} · 收到 ${d.at||''} · 处理 ${d.done||''}`;$('pbody').innerHTML=progress({...d,sent:''})+bubbles(d.thread||[],d.text)+(d.reason?`<div class="note readable"><h4>判断依据</h4>${readable(d.reason)}</div>`:'')+((d.qa||[]).length?`<div class="note"><h4>问过 AI</h4>${d.qa.map(q=>`<div class="qa readable"><b>问</b> ${esc(q['问'])}<br><b>答</b> ${readable(q['答'])}</div>`).join('')}</div>`:'');$('pfoot').innerHTML=d.sent?`<div class="lbl">已发出 · ${esc(d.sent_at)}</div><div class="draft sent readable">${readable(d.sent)}</div><div class="where" style="margin-top:8px">确认方式：${esc(d.confirm)}</div>`:`<div class="lbl">处理说明</div><div class="readable">${readable(d.why)}</div>`;anchorScroll()};if(cached)show(cached);
 try{const d=await api('/api/done?no='+encodeURIComponent(no));if(request!==panelRequest)return;if(!d.no)throw Error('没找到这条记录');doneCache.set(no,d);show(d)}catch(e){if(request===panelRequest&&!cached)$('pbody').innerHTML='<div class="note">读取失败：'+esc(e.name==='AbortError'?'助手响应超时':e.message)+'。请关闭后重试。</div>'}}
 
+// 每日汇报：和调试群机器人发的「每日汇报」同一份内容，只读本机记录，不另外发钉钉
+async function openReports(){sel=null;const request=++panelRequest;$('panel').classList.add('on');$('mask').classList.add('on');$('pav').outerHTML='<span class="av" id="pav" style="background:var(--amber)">报</span>';
+$('ptitle').textContent='每日汇报';$('psub').textContent='和调试群里机器人发的汇报一致，只存在本机';$('pfoot').innerHTML='';$('pbody').innerHTML=loading('正在读取每日汇报…');
+const rows=await api('/api/reports');if(request!==panelRequest)return;
+$('pbody').innerHTML=rows.map(r=>`<div class="note"><h4>${esc(r.time)} · ${esc(r.title)}</h4><div class="readable">${readable(r.text)}</div></div>`).join('')||'<div class="empty">还没有汇报记录（每天上岗时会发一份）</div>'}
+// 调试群对话：钉钉调试群里你和机器人的对话原样搬到这里；在这里发 = 以你的身份发到调试群，两边始终一致
+const STAGE={queued:'已排队',running:'处理中',replied:'已回复',answered:'已回复',done:'已处理',failed:'处理失败',interrupted:'中断了'};
+async function loadChat(){const rows=await api('/api/chat');const b=$('chatBody'),atEnd=b.scrollTop+b.clientHeight>=b.scrollHeight-40;
+b.innerHTML=rows.map(r=>r.me?`<div class="cmsg me"><div class="b"><div class="w">你 · ${esc(r.time)}${r.stage?' · '+esc(STAGE[r.stage]||r.stage):''}</div>${readable(r.text)}${r.error?`<div class="w">⚠ ${esc(r.error)}</div>`:''}</div></div>`
+:`<div class="cmsg"><div class="b"><div class="w">机器人 · ${esc(r.time)}${r.delivered===false?' · 钉钉没送达':''}</div><div class="tt">${readable(r.title)}</div><div class="readable">${readable(r.text)}</div></div></div>`).join('')||'<div class="empty">还没有对话</div>';if(atEnd)b.scrollTop=1e9}
+function openChat(){$('chatPanel').classList.add('on');$('mask').classList.add('on');if(!$('chatBody').querySelector('.cmsg'))$('chatBody').innerHTML=loading('正在读取调试群对话…');loadChat().then(()=>{$('chatBody').scrollTop=1e9;$('chatInput').focus()})}
+function closeChat(){$('chatPanel').classList.remove('on');$('mask').classList.remove('on')}
+async function sendChat(){const t=$('chatInput').value.trim();if(!t)return;$('chatInput').value='';const r=await api('/api/say',{text:t});toast(r.msg);setTimeout(loadChat,3000)}
 // 顶栏「值守中」点开：按群看最近消息（复用右侧面板）
-let hsel=null;async function openH(cid){sel=null;const request=++panelRequest;const gs=await api('/api/groups');if(request!==panelRequest)return;if(!gs.length)return toast('没有监听的群');hsel=cid||hsel||gs[0].cid;
+let hsel=null;async function openH(cid){sel=null;const request=++panelRequest;$('panel').classList.add('on');$('mask').classList.add('on');$('ptitle').textContent='最近消息';$('psub').textContent='正在读取监听的群…';$('pbody').innerHTML=loading('正在读取监听的群和最近消息，第一次打开要几秒…');$('pfoot').innerHTML='';const gs=await api('/api/groups');if(request!==panelRequest)return;if(!gs.length)return toast('没有监听的群');hsel=cid||hsel||gs[0].cid;
 $('pav').outerHTML='<span class="av" id="pav" style="background:var(--green)">群</span>';$('ptitle').textContent='最近消息';$('psub').textContent='按群看，每个群最近 30 条';
 $('panel').classList.add('on');$('mask').classList.add('on');
 const tabs='<div class="btns" style="margin:0 0 14px;position:sticky;top:-16px;background:var(--soft);padding:8px 0;z-index:1">'+gs.map(g=>`<button class="btn sm${g.cid===hsel?' p':''}" onclick="openH('${g.cid}')">${esc(g.name)}</button>`).join('')+'</div>';
 $('pfoot').innerHTML='<div class="where">只读：这里只看消息，要回复请在卡片或钉钉里处理</div>';$('pbody').innerHTML=tabs+'<div class="empty">正在读…</div>';const t=await api('/api/history?cid='+encodeURIComponent(hsel));if(request!==panelRequest||!$('panel').classList.contains('on'))return;
-$('pbody').innerHTML=tabs+t.map(m=>`<div class="bub">${av(m.who)}<div class="b"><div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx">${esc(m.text)}</div></div></div>`).join('')||'<div class="empty">没有消息</div>';$('pbody').scrollTop=1e9}
+$('pbody').innerHTML=tabs+t.map(m=>`<div class="bub">${av(m.who)}<div class="b"><div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx readable">${readable(m.text)}</div></div></div>`).join('')||'<div class="empty">没有消息</div>';$('pbody').scrollTop=1e9}
 function closeP(){panelRequest++;sel=null;hsel=hsel;$('panel').classList.remove('on');$('mask').classList.remove('on');render()}
 function confirmAction(action){return new Promise(resolve=>{const d=$('actionDialog'),note=$('actionNote'),manual=action==='manual_done',explain=manual||action==='not_mine';
 $('actionTitle').textContent=manual?'已手动处理':explain?'不归我':'发送到原会话';$('actionHint').textContent=manual?'请说明你在哪里、如何处理了这条消息。已有验证任务会继续保留执行进度，不会据此标成验收通过。':explain?'请填写这件事不归你的原因。':'确认将这段回复发送到原会话？';note.hidden=!explain;note.required=explain;note.value='';
@@ -4967,7 +4607,7 @@ async function go(no,action,text){if(pendingActions.has(no))return toast('这条
 pendingActions.add(no);render();const foot=$('pfoot');foot.querySelectorAll('button').forEach(x=>x.disabled=true);toast(action==='ask'?'正在提交问题…':'正在处理，请稍候…');
 try{const r=await api('/api/act',{no,action,text:text||''});toast(r.msg||'请查看处理结果');if(r.msg==='已处理'){delete edits[no];doneCache.delete(no)}if(action==='ask'){delete questions[no];if($('q'))$('q').value=''}}catch(e){toast(e.name==='AbortError'?'等待结果超时，请先查看已处理记录，勿重复发送':'操作未确认：'+e.message)}finally{pendingActions.delete(no);foot.querySelectorAll('button').forEach(x=>x.disabled=false);document.activeElement&&document.activeElement.blur();await tick()}}
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeP()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeP();closeChat()}});
 if(window.Notification&&Notification.permission==='default'){$('notif').style.display='';$('notif').onclick=()=>Notification.requestPermission().then(()=>$('notif').style.display='none')}
 // 有新事件时助手会用浏览器打开带 focus 的链接（弹到最前面）；新页面打开后通知旧页面关掉，始终只留一个操作台
 const FOCUS=new URLSearchParams(location.search).get('focus');let alive=true;
@@ -5218,17 +4858,15 @@ if __name__=='__main__':
 # 工作手册（助手照此处理群消息）
 
 ## 通用（3.1，2026-11-23）
-- 先读完整原消息和引用，核对本人已确认的职责、已有决定、合同、日志或结果，以及已有草稿、发出记录与执行承诺；不能拿摘要或旧结果代替本轮证据，已处理的不重复回复。
+- 先读完整原消息和引用，核对本人已确认的职责、已有决定、相关文档、日志或结果，以及已有草稿、发出记录与执行承诺；不能拿摘要或旧结果代替本轮证据，已处理的不重复回复。
 - 被 @ 或正文点名只表示需要判断，不表示已承接；先核环境、权限、账号、鉴权、数据和前置条件。条件不足明确“未执行”及缺项，不先承诺；测试环境授权不能套到正式环境。
 - **每条发往原会话的回复都须本人审核确认，再经助手统一发送并核对实际结果、留痕；职责已确认、角色名称和已有执行承诺均不替代本条回复审核。**
 - 回答本人或起草回复时，先说结论，再按问题逐项说明已核实内容、职责与条件、下一步；复杂问题按需展开，简单问题简短回答。不要机械套标题或反复复述原文，不编造数据。
 - 明确区分“草稿待审”“已发送”“实际执行”“验证通过”；回复发出、事项关闭不代表验证完成。没有执行就明确说未执行，依赖未齐保留阻塞及还欠什么。
 - 别人派新任务、新需求、要承诺时间、变更职责、申请资源权限、产品取舍或生产操作范围，由本人决定；只在操作台和提醒群说明背景、已核实内容和待决定事项，真实 @ 本人，不向提问者答应或发送占位话。默认 2 小时未处理再提醒。
 - 别人之间的对话不插话；不归本人或本人已拒接、移交的事项不因新通报自动恢复承接。
-- QA 失败先查平台、脚本、合同、数据与前置；QA 侧修复后复测，需要开发或数据配合时先核既有授权，找人做事必须真实 @。阻塞不报通过，未排除平台或数据问题前不判接口缺陷。
 - 图片先取完整消息并下载、核对实际图像，再判断；下载或识别失败保留原消息与待办，通过提醒群说明卡点，不擅自向对方索图。
 - 找负责人、历史处理或本人待办先查既有记录，不猜负责人、不替别人认领；对方帮忙后，在原会话起草结果与感谢，仍按本条审核后发送。
-- 已确认的回归、复测进入执行队列并运行已配置的测试入口，留实际日志、进度和结果；前置不足明确未执行，不以消息已回复代替完成。
 - 本人在提醒群的正常提问结合上下文直接回答；已明确授权动作继续推进，不让本人重复下指令。报告说明已做、未做及仍需本人决定什么。
 - 发送失败或后台超时、解析及处理异常，首次在提醒群真实 @ 本人，写群名、任务、时间、已核实内容、卡点及需要指导什么；保留任务，不写完成。
 - 只监听的群不发回复；协作库只读。升级保留个人手册与偏好，规则冲突先请本人决定；修改规则不等于批准发布、推送或重启。

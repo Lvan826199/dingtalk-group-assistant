@@ -345,10 +345,41 @@ def state():
             "last_event": A["LAST_EVENT"].get("summary", ""), "judge": judge, "send": send, "done": done[:CLOSED_N],
             "today_done": sum(1 for x in done if x.get("done", "").startswith(time.strftime("%m-%d"))),
             "queue": A["Q"].qsize() + A["READY"].qsize(), "processing": A["BUSY"]["n"],
-            "owner": A["owner_snapshot"](), "executions": A["execution_snapshot"](30),
+            "owner": A["owner_snapshot"](),
             "notifications": [{**x, "display_text": notification_body(x.get("text", ""))}
                               for x in A["notification_snapshot"]()],
             "time": time.strftime("%H:%M:%S")}
+
+
+def chat(limit=80):
+    """调试群对话（11-23 用户要求）：你在钉钉调试群说的话 + 机器人的回复 / 通知，按时间排成一条对话，和钉钉里看到的一致。"""
+    rows = []
+    for r in (A["owner_snapshot"]().get("recent") or []):
+        rows.append({"me": True, "t": r.get("received", 0), "text": r.get("question", ""), "stage": r.get("stage", ""),
+                     "error": r.get("error", "")})
+        if r.get("answer"):                     # 机器人对这条的答复（存在本人消息记录里），作为机器人一条接在后面
+            rows.append({"me": False, "t": r.get("finished") or r.get("updated") or r.get("received", 0) + 1, "title": "答复", "text": r["answer"], "delivered": None, "_ans": r.get("message_id")})
+    for n in A["notification_snapshot"](limit):
+        try:
+            t = time.mktime(time.strptime(str(n.get("time", ""))[:19], "%Y-%m-%dT%H:%M:%S"))
+        except ValueError:
+            t = n.get("recorded", 0)
+        rows.append({"me": False, "t": t, "title": n.get("title", ""), "text": n.get("text", ""), "delivered": n.get("delivered")})
+    answered = {r["text"].strip() for r in rows if r.get("_ans")}
+    rows = [r for r in rows if r.get("_ans") or r["me"] or r["text"].strip() not in answered]   # 同一条答复在通知里也有一份时只留一条
+    rows.sort(key=lambda x: x["t"])
+    for r in rows:
+        r["time"] = time.strftime("%m-%d %H:%M", time.localtime(r["t"])) if r["t"] else ""
+    return rows[-limit:]
+
+
+def say(text):
+    """在操作台输入框发消息：以本人身份发到钉钉调试群，再由监听收到、按调试群里一样的流程处理——钉钉和网页看到的是同一段对话。"""
+    text = (text or "").strip()
+    if not text or not A["CFG"].get("notify_group"):
+        return "内容为空或没配提醒群"
+    r = A["run"]([A["DWS"], "chat", "+messages-send", "--group", A["CFG"]["notify_group"], "--text", text, "--yes", "--format", "json"], timeout=60)
+    return "已发到调试群" if re.search(r'"(success|ok)":\s*true', getattr(r, "stdout", "") or "") else "发送失败：" + (getattr(r, "stderr", "") or getattr(r, "stdout", ""))[:120]
 
 
 def thread(no, x=None):
@@ -519,23 +550,13 @@ class H(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         if u.path == "/":
             return self._send(200, PAGE, "text/html; charset=utf-8")
+        if u.path == "/api/reports":
+            rows = [n for n in A["notification_snapshot"](5000) if re.search(r"每日汇报|日报|每日总结|今日总结", str(n.get("title") or ""))]
+            return self._send(200, json.dumps([{"time": str(n.get("time", ""))[:16].replace("T", " "), "title": n.get("title"), "text": n.get("text")} for n in rows[:60]], ensure_ascii=False))
+        if u.path == "/api/chat":
+            return self._send(200, json.dumps(chat(), ensure_ascii=False))
         if u.path == "/api/state":
             return self._send(200, json.dumps(state(), ensure_ascii=False))
-        if u.path == "/api/execution":
-            key = (urllib.parse.parse_qs(u.query).get("key") or [""])[0]
-            rec = A["_commit_load"]().get(key) or {}
-            if not rec.get("execution_kind"):
-                return self._send(404, "{}")
-            output = ""
-            path = (rec.get("execution_run") or {}).get("log")
-            if path:
-                try:
-                    with open(path, "rb") as f:
-                        f.seek(max(0, os.path.getsize(path) - 30000))
-                        output = f.read().decode("utf-8", errors="replace")
-                except OSError:
-                    output = "运行日志暂不可读，请检查本机权限。"
-            return self._send(200, json.dumps({"task": rec, "output": output}, ensure_ascii=False))
         if u.path == "/api/groups":
             return self._send(200, json.dumps([{"cid": c, "name": ding_name(c, n)} for c, n in _groups().items()], ensure_ascii=False))
         if u.path == "/api/monitor":
@@ -563,14 +584,6 @@ class H(BaseHTTPRequestHandler):
         except ValueError:
             return self._send(400, '{"msg": "格式不对"}')
         path = urllib.parse.urlparse(self.path).path
-        if path == "/api/execution":
-            if not self._local():
-                return self._send(403, '{"msg":"只允许本机桥接调用"}')
-            try:
-                rec = A["external_execution_progress"](body)
-            except (ValueError, TypeError) as ex:
-                return self._send(400, json.dumps({"msg": str(ex)}, ensure_ascii=False))
-            return self._send(200, json.dumps({"ok": True, "status": rec["status"]}))
         if path == "/api/notifications":
             if not self._local():
                 return self._send(403, '{"msg":"只允许本机桥接调用"}')
@@ -636,6 +649,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"ok": True, "no": no}, ensure_ascii=False))
         if path != "/api/act":
             return self._send(404, "{}")
+        if urllib.parse.urlparse(self.path).path == "/api/say":
+            return self._send(200, json.dumps({"msg": say(body.get("text", ""))}, ensure_ascii=False))
         no, action, text = body.get("no"), body.get("action"), body.get("text", "")
         if action == "ask":                          # 问 AI 要几十秒，后台跑，答案回来后卡片自动更新
             threading.Thread(target=act, args=(no, action, text), daemon=True).start()
@@ -727,6 +742,12 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1f
 .tag{display:inline-block;border-radius:99px;padding:0 8px;font-size:11.5px;font-weight:600}.t-red{background:var(--red-soft);color:var(--red)}.t-ok{background:var(--green-soft);color:var(--green)}
 .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .dtabs{display:flex;gap:6px;margin:0 0 10px}.draft.sent{background:var(--green-soft)}.draft.sent::before{content:"已发出";color:var(--green)}.t-gray{background:var(--soft);color:var(--muted)}
+.chat-panel{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--surface);transform:translateX(100%);transition:transform .22s;display:flex;flex-direction:column;z-index:11;box-shadow:none}
+.chat-panel.on{transform:none;box-shadow:-12px 0 40px rgba(10,20,45,.18)}.chat-panel .pb{flex:1;overflow:auto;padding:16px 20px;background:var(--soft)}
+.cmsg{display:flex;margin:0 0 12px}.cmsg.me{justify-content:flex-end}.cmsg .b{max-width:86%;border-radius:12px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);white-space:pre-wrap;word-break:break-word}
+.cmsg.me .b{background:var(--blue);color:#fff;border-color:var(--blue)}.cmsg .w{font-size:11.5px;color:var(--muted);margin-bottom:3px}.cmsg.me .w{color:rgba(255,255,255,.8)}.cmsg .tt{font-weight:600;margin-bottom:2px}
+.readable p,.tx p{margin:0 0 4px}.mdh{font-weight:700;margin:2px 0 6px}.mdl{margin:2px 0 6px;padding-left:18px}.mdl li{margin:1px 0}.mention{color:var(--blue);font-weight:600}.readable a,.tx a,.cmsg a{color:inherit;text-decoration:underline}
+.foot{text-align:center;color:var(--faint);font-size:12px;padding:6px 0 10px}
 .empty{color:var(--faint);text-align:center;padding:48px 10px}.empty .big{font-size:30px;display:block;margin-bottom:6px}
 .mask{position:fixed;inset:0;background:rgba(10,18,35,.25);opacity:0;pointer-events:none;transition:.2s;z-index:9}.mask.on{opacity:1;pointer-events:auto}
 aside{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--surface);box-shadow:none;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:10}
@@ -757,22 +778,24 @@ dialog{max-width:520px;width:calc(100% - 32px);border:1px solid var(--border);bo
 @media(max-width:980px){.ownerbar,.toolbar{margin:12px 14px 0}.ownerbar summary{flex-wrap:wrap}.toolbar{flex-wrap:wrap}.toolbar input{max-width:none}header{padding:12px 14px;gap:10px}.chips{gap:5px}.owner-list{max-height:250px}.ownerbar summary .sp{flex-basis:100%;margin-left:20px}}
 </style></head><body>
 <header><div class="brand"><span class="logo">群</span>操作台</div><div class="chips" id="stat"><span class="chip">连接中…</span></div><span class="sp"></span>
-<button class="btn sm" onclick="openMonitor()">监听设置</button><button class="btn sm" id="notif" style="display:none">🔔 开启桌面通知</button><span class="ver" id="ver"></span></header>
-<details class="ownerbar" id="ownerTray"><summary><b>你的消息</b><span id="ownerCount" class="tag t-gray">读取中</span><span class="sp">调试群提问的接收、处理和回复记录</span></summary><div id="ownerList" class="owner-list"></div></details>
-<details class="ownerbar" id="notificationTray"><summary><b>机器人通知</b><span id="notificationCount" class="tag t-gray">读取中</span><span class="sp">调试群回执与通知；投递成功不代表任务完成</span></summary><div id="notificationList" class="owner-list"></div></details>
-<details class="ownerbar" id="executionTray" open><summary><b>执行任务</b><span id="executionCount" class="tag t-gray">读取中</span><span class="sp">接口回归与复测；回复和实际执行分开记录</span></summary><div id="executionList" class="owner-list"></div></details>
+<button class="btn sm" onclick="openChat()">💬 调试群对话</button><button class="btn sm" onclick="openReports()">📋 每日汇报</button><button class="btn sm" onclick="openMonitor()">监听设置</button><button class="btn sm" id="notif" style="display:none">🔔 开启桌面通知</button><span class="ver" id="ver"></span></header>
 <div class="toolbar"><input class="q" id="taskSearch" aria-label="搜索任务" placeholder="搜索群名、任务编号、消息或回复…" oninput="taskQuery=this.value;render()"><span>已回复与实际执行进度分别显示</span></div>
 <main>
 <section class="col c1"><div class="ch"><span class="ic">✋</span><div><h2>要你判断</h2><div class="sub">拿不准是不是归你、要不要接</div></div><span class="cnt" id="n1">0</span></div><div class="list" id="judge"></div></section>
 <section class="col c2"><div class="ch"><span class="ic">✉️</span><div><h2>草稿待发</h2><div class="sub">AI 写好了，你点头才发</div></div><span class="cnt" id="n2">0</span></div><div class="list" id="send"></div></section>
 <section class="col c3"><div class="ch"><span class="ic">✓</span><div><h2>已处理</h2><div class="sub">页面、提醒群、原会话里处理的都算</div></div><span class="cnt" id="n3">0</span></div><div class="list" id="done"></div></section>
 </main>
-<div class="mask" id="mask" onclick="closeP()"></div>
+<div class="foot">群消息助手 · 作者：梦无矶</div>
+<div class="mask" id="mask" onclick="closeP();closeChat()"></div>
+<aside id="chatPanel" class="chat-panel"><div class="ph"><span class="av" style="background:var(--blue)">群</span><div><div class="t">调试群对话</div><div class="s">和钉钉调试群里看到的同一段对话：你说的话、机器人的回复和通知</div></div><span class="sp"></span><button class="btn sm" onclick="closeChat()">关闭</button></div>
+<div class="pb" id="chatBody"><div class="empty">读取中…</div></div>
+<div class="pf"><div class="lbl">在这里说，和在钉钉调试群里说一样（会以你的身份发到调试群，比如「#编号 已处理：在钉钉里回过了」「待回复」）</div>
+<div class="askrow"><input class="q" id="chatInput" placeholder="对助手说…" onkeydown="if(event.key==='Enter'&&!event.isComposing)sendChat()"><button class="btn p" onclick="sendChat()">发送</button></div></div></aside>
 <aside id="panel"><div class="ph"><span class="av" id="pav"></span><div><div class="t" id="ptitle"></div><div class="s" id="psub"></div></div><span class="sp"></span><button class="btn sm" onclick="closeP()">关闭</button></div><div class="pb" id="pbody"></div><div class="pf" id="pfoot"></div></aside>
 <div class="toast" id="toast"></div>
 <dialog id="actionDialog"><h3 id="actionTitle"></h3><div id="actionHint"></div><textarea id="actionNote" placeholder="例如：我已在群里回复，后续等待研发提供样本"></textarea><div class="btns"><button class="btn" id="actionCancel">取消</button><button class="btn p" id="actionOK">确认</button></div></dialog>
 <dialog id="monitorDialog" aria-labelledby="monitorTitle"><div class="btns"><h3 id="monitorTitle" style="flex:1">监听设置</h3><button class="btn sm" onclick="$('monitorDialog').close()">关闭</button></div>
-<p class="monitor-hint">调整群消息助手的监听群和每日时段。所有群回复仍需你确认；Jira、定时回归及其他值守脚本按各自规则运行。</p>
+<p class="monitor-hint">调整群消息助手的监听群和每日时段。所有群回复仍需你确认；你另外配置的值守脚本按各自规则运行。</p>
 <div id="monitorError" class="monitor-error" role="status"></div>
 <label>每日监听时间 <span id="monitorTimezone" class="monitor-hint"></span></label><div class="btns"><input type="time" id="monitorStart" aria-label="监听开始时间"> 至 <input type="time" id="monitorEnd" aria-label="监听结束时间"><label style="margin:0"><input type="checkbox" id="monitorAllDay" onchange="monitorAllDayChanged()"> 全天监听</label><button class="btn p" id="monitorTimeSave" onclick="saveMonitorTime()">保存时段</button></div>
 <p class="monitor-hint">结束早于开始表示跨午夜。时间外暂停监听，操作台保持可用；已开始的任务继续完成，恢复后补读。电脑需保持开机，助手需保持运行。</p>
@@ -789,12 +812,15 @@ const COLORS=['#3360e6','#1c8a4a','#c27a00','#8a4fd8','#d23b3b','#0f8f9e','#c247
 function av(n){n=String(n||'?');let h=0;for(const ch of n)h=(h*31+ch.charCodeAt(0))>>>0;return `<span class="av" style="background:${COLORS[h%COLORS.length]}">${esc(n.replace(/[-_ ].*/,'').slice(-2))}</span>`}
 function toast(t){const x=$('toast');x.textContent=t;x.classList.add('on');clearTimeout(x._t);x._t=setTimeout(()=>x.classList.remove('on'),2600)}
 async function api(p,b){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),b?90000:15000);try{const r=await fetch(p+(p.includes('?')?'&':'?')+'k='+encodeURIComponent(K),b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b),signal:controller.signal}:{cache:'no-store',signal:controller.signal});if(!r.ok)throw Error(r.status===403?'操作台授权已失效，请重新打开本人链接':'助手返回错误 '+r.status);return await r.json()}finally{clearTimeout(timer)}}
-function readable(text){return esc(text).split(/\n\s*\n/).map(p=>'<p>'+p.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>').replace(/`([^`\n]+)`/g,'<code>$1</code>')+'</p>').join('')}
+// 钉钉消息里的 Markdown 按人看的样子显示（标题、加粗、链接、代码、列表、换行），不显示 ### / ** / [](…) 原样符号
+function inline(t){return t.replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>').replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/&lt;@[A-Za-z0-9_-]+&gt;/g,'<span class="mention">@某人</span>').replace(/(^|[^"=])(https?:\/\/[^\s<]+)/g,'$1<a href="$2" target="_blank" rel="noopener">$2</a>')}
+function readable(text){const L=esc(String(text||'').replace(/\r/g,'')).split('\n');let out='',list=false;
+for(const raw of L){const l=raw.trim();if(!l){if(list){out+='</ul>';list=false}continue}
+let m=l.match(/^#{1,6}\s+(.*)$/);if(m){if(list){out+='</ul>';list=false}out+='<div class="mdh">'+inline(m[1])+'</div>';continue}
+m=l.match(/^(?:[-*•]|\d+[.、)])\s+(.*)$/);if(m){if(!list){out+='<ul class="mdl">';list=true}out+='<li>'+inline(m[1])+'</li>';continue}
+if(list){out+='</ul>';list=false}out+='<p>'+inline(l)+'</p>'}
+return out+(list?'</ul>':'')}
 function execLabel(status){return {committed:'待执行',starting:'正在启动',interrupted:'执行中断待核实',running:'执行中',waiting_resources:'等待前置',waiting_dependency:'等待配合',completed:'已完成',done:'已完成',failed:'执行异常',declined:'已拒接'}[status]||status||''}
-function renderOwners(){const o=S.owner||{queued:0,running:0,needs_attention:0,recent:[]},count=$('ownerCount');count.textContent=o.running+' 处理中 · '+o.queued+' 排队'+(o.needs_attention?' · '+o.needs_attention+' 需关注':'');count.className='tag '+(o.needs_attention?'t-red':o.running||o.queued?'t-wait':'t-gray');const labels={queued:'排队中',running:'处理中',replied:'已回复',handled:'指令已处理',failed:'处理失败',interrupted:'处理中断'};const html=o.recent.map(x=>`<div class="owner-item"><span class="tag ${['failed','interrupted'].includes(x.stage)?'t-red':x.stage==='replied'?'t-ok':x.stage==='queued'||x.stage==='running'?'t-wait':'t-gray'}">${esc(labels[x.stage]||x.stage)}</span> <span class="when">${esc(x.message_time||'')}${['queued','running'].includes(x.stage)?' · 已等待 '+Math.floor(x.age_seconds/60)+' 分钟':''}</span><div class="owner-question">${esc(x.question)}</div>${x.error?`<div class="tag t-red">${esc(x.error)}</div>`:''}${x.answer?`<details><summary class="card-hint">查看答复</summary><div class="owner-answer readable">${readable(x.answer)}</div></details>`:''}</div>`).join('')||'<div class="loading-note">暂时没有调试群提问记录；新问题会显示接收和回复状态。</div>';if($('ownerList').dataset.content!==html){const expanded=new Set([...$('ownerList').querySelectorAll('.owner-item')].flatMap((el,i)=>el.querySelector('details[open]')?[i]:[]));$('ownerList').innerHTML=html;$('ownerList').dataset.content=html;[...$('ownerList').querySelectorAll('.owner-item')].forEach((el,i)=>{if(expanded.has(i)&&el.querySelector('details'))el.querySelector('details').open=true})}}
-function renderNotifications(){const rows=S.notifications||[];$('notificationCount').textContent='最近 '+rows.length+' 条';const html=rows.map(x=>`<div class="owner-item" data-id="${esc(x.notification_id)}"><span class="tag ${x.delivered?'t-ok':'t-red'}">${x.delivered?'机器人已送达':'机器人未送达'}</span> <span class="when">${esc((x.time||'').replace('T',' '))}</span><div class="owner-question">${esc(x.title)}</div>${x.group?`<div class="where">${esc(x.group)}</div>`:''}<details><summary class="card-hint">查看完整通知</summary><div class="owner-answer readable">${readable(x.display_text||x.text)}</div></details></div>`).join('')||'<div class="loading-note">暂无机器人通知记录。</div>';const el=$('notificationList');if(el.dataset.content!==html){const expanded=new Set([...el.querySelectorAll('.owner-item')].filter(x=>x.querySelector('details[open]')).map(x=>x.dataset.id));el.innerHTML=html;el.dataset.content=html;[...el.querySelectorAll('.owner-item')].forEach(x=>{if(expanded.has(x.dataset.id))x.querySelector('details').open=true})}}
-function renderExecutions(){const rows=S.executions||[];$('executionCount').textContent=rows.filter(x=>!['completed','declined'].includes(x.status)).length+' 未完成';const el=$('executionList'),html=rows.map(x=>{const run=x.execution_run||{},last=(x.history||[]).slice(-1)[0]||{};return `<div class="owner-item"><span class="tag ${x.status==='completed'?'t-ok':['failed','interrupted'].includes(x.status)?'t-red':'t-wait'}">${esc(x.execution_backend==='external'&&x.status==='committed'?'待值守执行回执':execLabel(x.status))}</span><div class="owner-question">${esc(x.commitment_text)}</div><div class="where">${esc(last.at||x.confirmed_at)} · ${esc(last.detail||x.next_action||'')}</div>${run.id?`<div class="where">运行编号：${esc(run.id)} · ${esc(run.environment)}${run.total!=null?' · '+esc(run.passed)+'/'+esc(run.total):''}</div><div class="where">日志：${esc(run.log)}</div>`:''}<button class="btn sm" onclick="openExecution('${esc(x.task_key)}')">查看进度与日志</button></div>`}).join('')||'<div class="loading-note">暂无已确认的回归或复测任务。</div>';if(el.dataset.content!==html){el.innerHTML=html;el.dataset.content=html}}
-async function openExecution(key){sel=null;const request=++panelRequest;$('mask').classList.add('on');$('panel').classList.add('on');$('ptitle').textContent='执行任务';$('psub').textContent='实际运行日志与结果';$('pbody').innerHTML=loading('正在读取执行进度…');$('pfoot').innerHTML='';try{const r=await api('/api/execution?key='+encodeURIComponent(key));if(request!==panelRequest)return;const x=r.task;$('pbody').innerHTML=`<div class="note readable"><h4>${esc(execLabel(x.status))}</h4>${readable(x.commitment_text)}${(x.history||[]).map(h=>`<p><b>${esc(h.at)} · ${esc(h.stage)}</b><br>${esc(h.detail)}</p>`).join('')}</div><div class="note"><h4>实际运行输出（末30KB）</h4><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(r.output||'尚无运行输出；任务未执行时不生成虚假日志。')}</pre></div>`}catch(e){if(request===panelRequest)$('pbody').textContent='读取失败：'+e.message}}
 function matches(c){return !taskQuery||[c.no,c.who,c.group,c.text,c.what,c.draft,c.sent,c.reason,c.why].some(x=>String(x||'').toLowerCase().includes(taskQuery.trim().toLowerCase()))}
 function bubbles(rows,source=''){return rows.map(m=>{const anchor=m.anchor||(!m.reply&&m.text&&source&&source.startsWith(String(m.text||'').slice(0,30)));return `<div class="bub${m.reply?' reply':anchor?' anchor':''}" ${anchor?'data-anchor="true"':''}>${av(m.who)}<div class="b">${m.reply||anchor?`<div class="bubble-label">${m.reply?'已发送回复':'被提及的原消息'}</div>`:''}<div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx readable">${readable(m.text)}</div></div></div>`}).join('')}
 function loading(text){return `<div role="status" aria-live="polite"><div class="loading-note">${esc(text)}</div><div class="skeleton"></div><div class="skeleton short"></div><div class="skeleton"></div></div>`}
@@ -818,12 +844,12 @@ async function toggleMonitorGroup(i,button){const g=monitorState.groups[i];await
 function head(c){return `<div class="top">${av(c.who)}<div><div class="who">${esc(c.who)}</div><div class="where">${esc(c.group||'')} <span class="no">${c.no}</span></div></div><span class="when">${c.overdue?'<span class="tag t-red">超时</span> ':''}${esc(c.at)}</span></div>`}
 function progress(c){const x=c.commitment||{};return(c.sent?`<details class="progress reply"><summary>已回复 · ${esc(c.sent_at||'')} · 查看原文</summary><div class="readable">${readable(c.sent)}</div></details>`:'')+(x.status?`<div class="progress exec"><b>执行进度：${esc(execLabel(x.status))}</b>${x.next_action?`<div>${esc(x.next_action)}</div>`:''}</div>`:'')}
 
-function card(c,kind){return `<div aria-busy="${pendingActions.has(c.no)}" class="card${sel===c.no?' sel':''}" onclick="openP('${c.no}')">${head(c)}<div class="txt">${esc(c.text)}</div>${progress(c)}
+function card(c,kind){return `<div aria-busy="${pendingActions.has(c.no)}" class="card${sel===c.no?' sel':''}" onclick="openP('${c.no}')">${head(c)}<div class="txt readable">${readable(c.text)}</div>${progress(c)}
 ${kind==='send'?`<div class="draft">${esc(c.draft)}</div><div class="card-hint">点开查看完整草稿和依据</div>`:(c.reason?`<div class="why">${esc(c.reason)}</div>`:'')}
 <div class="btns" onclick="event.stopPropagation()">${kind==='send'?`<button class="btn p" onclick="go('${c.no}','send')">发送</button><button class="btn" onclick="openP('${c.no}')">修改</button><button class="btn d" onclick="go('${c.no}','drop')">不发</button>`:
 `<button class="btn p" onclick="openP('${c.no}')">${c.sent?'补充回复':'回复'}</button><button class="btn" onclick="go('${c.no}','not_mine')">不归我</button>`}<button class="btn" onclick="go('${c.no}','manual_done')">已手动处理</button><button class="btn" onclick="openP('${c.no}',1)">问 AI</button></div></div>`}
 function empty(t){return `<div class="empty"><span class="big">☕</span>${t}</div>`}
-function render(){if(!S)return;const s=S;renderOwners();renderNotifications();renderExecutions();const ok=/^(\d+)\/\1$/.test(s.listeners)&&s.listeners!=='0/0';
+function render(){if(!S)return;const s=S;if($('chatPanel').classList.contains('on'))loadChat();const ok=/^(\d+)\/\1$/.test(s.listeners)&&s.listeners!=='0/0';
 $('stat').innerHTML=`<span class="chip duty d-${s.duty}" style="cursor:pointer" onclick="openH()" title="点开按群看最近消息；最近收到消息 ${esc(s.last_event_t||'无')}；${esc(s.last_event||'')}"><span class="dot"></span><b>${esc(s.duty_text)}</b> · 监听 ${s.listeners}${s.last_event_t?' · 最近 '+s.last_event_t:''}</span><span class="chip">要你判断 <b>${s.judge.length}</b></span><span class="chip">草稿待发 <b>${s.send.length}</b></span><span class="chip">队列 <b>${s.queue||0}</b> · 处理中 <b>${s.processing||0}</b></span><span class="chip">今天已处理 <b>${s.today_done}</b></span><span class="chip">${esc(s.me)} · ${s.time}</span>`;$('ver').textContent=s.version;
 $('judge').innerHTML=s.judge.filter(matches).map(c=>card(c,'judge')).join('')||empty('没有要你判断的事');$('send').innerHTML=s.send.filter(matches).map(c=>card(c,'send')).join('')||empty('没有待发的草稿');
 const dl=s.done.filter(matches).filter(d=>dfilter==='all'||d.result==='已发送');
@@ -851,13 +877,26 @@ async function openD(no){sel=null;const request=++panelRequest,cached=doneCache.
 const show=d=>{if(request!==panelRequest)return;$('ptitle').textContent=d.who||'';$('psub').textContent=`${d.group||''} · ${no} · 收到 ${d.at||''} · 处理 ${d.done||''}`;$('pbody').innerHTML=progress({...d,sent:''})+bubbles(d.thread||[],d.text)+(d.reason?`<div class="note readable"><h4>判断依据</h4>${readable(d.reason)}</div>`:'')+((d.qa||[]).length?`<div class="note"><h4>问过 AI</h4>${d.qa.map(q=>`<div class="qa readable"><b>问</b> ${esc(q['问'])}<br><b>答</b> ${readable(q['答'])}</div>`).join('')}</div>`:'');$('pfoot').innerHTML=d.sent?`<div class="lbl">已发出 · ${esc(d.sent_at)}</div><div class="draft sent readable">${readable(d.sent)}</div><div class="where" style="margin-top:8px">确认方式：${esc(d.confirm)}</div>`:`<div class="lbl">处理说明</div><div class="readable">${readable(d.why)}</div>`;anchorScroll()};if(cached)show(cached);
 try{const d=await api('/api/done?no='+encodeURIComponent(no));if(request!==panelRequest)return;if(!d.no)throw Error('没找到这条记录');doneCache.set(no,d);show(d)}catch(e){if(request===panelRequest&&!cached)$('pbody').innerHTML='<div class="note">读取失败：'+esc(e.name==='AbortError'?'助手响应超时':e.message)+'。请关闭后重试。</div>'}}
 
+// 每日汇报：和调试群机器人发的「每日汇报」同一份内容，只读本机记录，不另外发钉钉
+async function openReports(){sel=null;const request=++panelRequest;$('panel').classList.add('on');$('mask').classList.add('on');$('pav').outerHTML='<span class="av" id="pav" style="background:var(--amber)">报</span>';
+$('ptitle').textContent='每日汇报';$('psub').textContent='和调试群里机器人发的汇报一致，只存在本机';$('pfoot').innerHTML='';$('pbody').innerHTML=loading('正在读取每日汇报…');
+const rows=await api('/api/reports');if(request!==panelRequest)return;
+$('pbody').innerHTML=rows.map(r=>`<div class="note"><h4>${esc(r.time)} · ${esc(r.title)}</h4><div class="readable">${readable(r.text)}</div></div>`).join('')||'<div class="empty">还没有汇报记录（每天上岗时会发一份）</div>'}
+// 调试群对话：钉钉调试群里你和机器人的对话原样搬到这里；在这里发 = 以你的身份发到调试群，两边始终一致
+const STAGE={queued:'已排队',running:'处理中',replied:'已回复',answered:'已回复',done:'已处理',failed:'处理失败',interrupted:'中断了'};
+async function loadChat(){const rows=await api('/api/chat');const b=$('chatBody'),atEnd=b.scrollTop+b.clientHeight>=b.scrollHeight-40;
+b.innerHTML=rows.map(r=>r.me?`<div class="cmsg me"><div class="b"><div class="w">你 · ${esc(r.time)}${r.stage?' · '+esc(STAGE[r.stage]||r.stage):''}</div>${readable(r.text)}${r.error?`<div class="w">⚠ ${esc(r.error)}</div>`:''}</div></div>`
+:`<div class="cmsg"><div class="b"><div class="w">机器人 · ${esc(r.time)}${r.delivered===false?' · 钉钉没送达':''}</div><div class="tt">${readable(r.title)}</div><div class="readable">${readable(r.text)}</div></div></div>`).join('')||'<div class="empty">还没有对话</div>';if(atEnd)b.scrollTop=1e9}
+function openChat(){$('chatPanel').classList.add('on');$('mask').classList.add('on');if(!$('chatBody').querySelector('.cmsg'))$('chatBody').innerHTML=loading('正在读取调试群对话…');loadChat().then(()=>{$('chatBody').scrollTop=1e9;$('chatInput').focus()})}
+function closeChat(){$('chatPanel').classList.remove('on');$('mask').classList.remove('on')}
+async function sendChat(){const t=$('chatInput').value.trim();if(!t)return;$('chatInput').value='';const r=await api('/api/say',{text:t});toast(r.msg);setTimeout(loadChat,3000)}
 // 顶栏「值守中」点开：按群看最近消息（复用右侧面板）
-let hsel=null;async function openH(cid){sel=null;const request=++panelRequest;const gs=await api('/api/groups');if(request!==panelRequest)return;if(!gs.length)return toast('没有监听的群');hsel=cid||hsel||gs[0].cid;
+let hsel=null;async function openH(cid){sel=null;const request=++panelRequest;$('panel').classList.add('on');$('mask').classList.add('on');$('ptitle').textContent='最近消息';$('psub').textContent='正在读取监听的群…';$('pbody').innerHTML=loading('正在读取监听的群和最近消息，第一次打开要几秒…');$('pfoot').innerHTML='';const gs=await api('/api/groups');if(request!==panelRequest)return;if(!gs.length)return toast('没有监听的群');hsel=cid||hsel||gs[0].cid;
 $('pav').outerHTML='<span class="av" id="pav" style="background:var(--green)">群</span>';$('ptitle').textContent='最近消息';$('psub').textContent='按群看，每个群最近 30 条';
 $('panel').classList.add('on');$('mask').classList.add('on');
 const tabs='<div class="btns" style="margin:0 0 14px;position:sticky;top:-16px;background:var(--soft);padding:8px 0;z-index:1">'+gs.map(g=>`<button class="btn sm${g.cid===hsel?' p':''}" onclick="openH('${g.cid}')">${esc(g.name)}</button>`).join('')+'</div>';
 $('pfoot').innerHTML='<div class="where">只读：这里只看消息，要回复请在卡片或钉钉里处理</div>';$('pbody').innerHTML=tabs+'<div class="empty">正在读…</div>';const t=await api('/api/history?cid='+encodeURIComponent(hsel));if(request!==panelRequest||!$('panel').classList.contains('on'))return;
-$('pbody').innerHTML=tabs+t.map(m=>`<div class="bub">${av(m.who)}<div class="b"><div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx">${esc(m.text)}</div></div></div>`).join('')||'<div class="empty">没有消息</div>';$('pbody').scrollTop=1e9}
+$('pbody').innerHTML=tabs+t.map(m=>`<div class="bub">${av(m.who)}<div class="b"><div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx readable">${readable(m.text)}</div></div></div>`).join('')||'<div class="empty">没有消息</div>';$('pbody').scrollTop=1e9}
 function closeP(){panelRequest++;sel=null;hsel=hsel;$('panel').classList.remove('on');$('mask').classList.remove('on');render()}
 function confirmAction(action){return new Promise(resolve=>{const d=$('actionDialog'),note=$('actionNote'),manual=action==='manual_done',explain=manual||action==='not_mine';
 $('actionTitle').textContent=manual?'已手动处理':explain?'不归我':'发送到原会话';$('actionHint').textContent=manual?'请说明你在哪里、如何处理了这条消息。已有验证任务会继续保留执行进度，不会据此标成验收通过。':explain?'请填写这件事不归你的原因。':'确认将这段回复发送到原会话？';note.hidden=!explain;note.required=explain;note.value='';
@@ -866,7 +905,7 @@ async function go(no,action,text){if(pendingActions.has(no))return toast('这条
 pendingActions.add(no);render();const foot=$('pfoot');foot.querySelectorAll('button').forEach(x=>x.disabled=true);toast(action==='ask'?'正在提交问题…':'正在处理，请稍候…');
 try{const r=await api('/api/act',{no,action,text:text||''});toast(r.msg||'请查看处理结果');if(r.msg==='已处理'){delete edits[no];doneCache.delete(no)}if(action==='ask'){delete questions[no];if($('q'))$('q').value=''}}catch(e){toast(e.name==='AbortError'?'等待结果超时，请先查看已处理记录，勿重复发送':'操作未确认：'+e.message)}finally{pendingActions.delete(no);foot.querySelectorAll('button').forEach(x=>x.disabled=false);document.activeElement&&document.activeElement.blur();await tick()}}
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeP()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeP();closeChat()}});
 if(window.Notification&&Notification.permission==='default'){$('notif').style.display='';$('notif').onclick=()=>Notification.requestPermission().then(()=>$('notif').style.display='none')}
 // 有新事件时助手会用浏览器打开带 focus 的链接（弹到最前面）；新页面打开后通知旧页面关掉，始终只留一个操作台
 const FOCUS=new URLSearchParams(location.search).get('focus');let alive=true;

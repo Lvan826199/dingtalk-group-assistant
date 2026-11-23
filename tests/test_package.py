@@ -28,7 +28,7 @@ def built(tmp_path):
     return out,manifest
 
 
-def test_all_packages_have_programs_templates_and_installers(built,tmp_path):
+def test_upgrade_bundle_has_programs_and_templates_only(built,tmp_path):
     out,m=built
     assert json.loads((out/'latest.json').read_text(encoding="utf-8"))==m
     for platform in ('windows','macos','linux'):
@@ -37,9 +37,7 @@ def test_all_packages_have_programs_templates_and_installers(built,tmp_path):
         extracted=tmp_path/platform
         assert runtime.extract_verified(archive,m['sha256'][archive.name],extracted)['version']==m['version']
         assert all((extracted/n).is_file() for n in runtime.PROGRAMS)
-        if platform=='windows':
-            assert (extracted/'install.cmd').is_file() and (extracted/'install.ps1').is_file()
-        else: assert (extracted/'install.sh').is_file()
+        assert not any((extracted/n).exists() for n in ('install.cmd','install.ps1','install.sh','install.py'))   # 11-23 去掉安装包，只留升级包
         assert '## 通用' in (extracted/'工作手册模板.md').read_text(encoding='utf-8')
         assert '## 按角色' not in (extracted/'工作手册模板.md').read_text(encoding='utf-8')
         assert not (extracted/'config.json').exists()
@@ -149,12 +147,6 @@ def test_update_receipt_not_deleted_until_notified(make_agent):
     assert not p.exists() and notes[-1][0]=='已升级到 '+a.VERSION.split()[0]
 
 
-def test_installer_rejects_missing_dependencies_without_writing(built,tmp_path,monkeypatch):
-    out,m=built;src=tmp_path/'source'
-    runtime.extract_verified(out/m['windows'],m['sha256'][m['windows']],src)
-    installer=load('installer_test',src/'install.py')
-    monkeypatch.setattr(installer.shutil,'which',lambda name:None)
-    with pytest.raises(ValueError,match='缺少'):installer.preflight()
 
 
 def test_install_lock_prevents_two_writers(tmp_path):
@@ -177,17 +169,6 @@ def test_upgrade_waits_for_finished_worker_and_preserves_unstarted_batch(make_ag
     assert a.READY.get_nowait()==batch
 
 
-@pytest.mark.skipif(os.name=='nt',reason='Windows进程查询由本人实测')
-def test_installer_refuses_running_legacy_agent_without_pid(built,tmp_path,monkeypatch):
-    from types import SimpleNamespace
-    out,m=built;src=tmp_path/'source';app=tmp_path/'app';app.mkdir();(app/'agent.py').write_text('old', encoding="utf-8")
-    runtime.extract_verified(out/m['windows'],m['sha256'][m['windows']],src)
-    installer=load('installer_running_test',src/'install.py')
-    monkeypatch.setattr(installer,'command',lambda args,**kw:SimpleNamespace(returncode=0,stdout='321\n' if args[0]=='pgrep' else ''))
-    monkeypatch.setattr(installer.runtime,'alive',lambda pid:True)
-    monkeypatch.setattr(installer.time,'sleep',lambda _:None)
-    with pytest.raises(ValueError,match='仍在运行'):installer.stop(app)
-    assert (app/'agent.py').read_text(encoding="utf-8")=='old'
 
 
 def test_coordination_path_is_generic_and_preserves_existing(tmp_path):

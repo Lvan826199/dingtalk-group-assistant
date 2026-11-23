@@ -26,9 +26,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
       python agent.py send <草稿> 发送一条草稿
       python agent.py check      自检（环境、登录、配置）
       python agent.py status     今天处理了多少、还有几件没处理
-      python agent.py watch      打开只读实时汇报窗口，不重复启动监听
-      python agent.py watch --once  查看最近 20 条状态后退出
-      python agent.py clear      清空待回复（没处理完的事和草稿全部清掉，不发出）
+                  python agent.py clear      清空待回复（没处理完的事和草稿全部清掉，不发出）
       python agent.py stickers   下载 / 更新内置表情包索引（v2.6）
       python agent.py audit [N]  看最近 N 条发出留痕（谁、何时确认、问过 AI 什么）（v2.8）
       python agent.py purge      立刻清掉原始记录（消息原文、群历史导出、旧日志），记忆和草稿不动（v2.7）
@@ -36,7 +34,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.1.4 2026-11-23"
+VERSION = "v3.2 2026-11-23"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -369,123 +367,12 @@ def status_event(stage, detail="", announce=False, event=None):
         notify(f"📡 {stage}", format_report(rec) if event else rec["detail"])
 
 
-def report_records(path, follow=True, tail=20):
-    """只读状态日志；保留半行，支持文件截断/替换，不碰监听或消费游标。"""
-    offset, identity, initial = 0, None, True
-    while True:
-        records = deque(maxlen=tail) if initial else []
-        try:
-            with open(path, "rb") as f:
-                st = os.fstat(f.fileno())
-                current = (st.st_dev, st.st_ino)
-                if current != identity or st.st_size < offset:
-                    offset = 0
-                identity = current
-                f.seek(offset)
-                while True:
-                    line = f.readline()
-                    if not line or not line.endswith(b"\n"):
-                        break
-                    offset = f.tell()
-                    try:
-                        rec = json.loads(line.decode("utf-8"))
-                    except (ValueError, UnicodeDecodeError):
-                        continue
-                    if isinstance(rec, dict):
-                        records.append(rec)
-        except FileNotFoundError:
-            pass
-        yield from records
-        initial = False
-        if not follow:
-            return
-        yield None
 
 
-def report_window_lock():
-    """一个安装目录只保留一份自动查看器；锁随进程退出释放，不触碰事件。"""
-    f = open(os.path.join(HOME, "logs", "report-window.lock"), "a+b")
-    try:
-        if os.name == "nt":
-            import msvcrt
-            if os.fstat(f.fileno()).st_size == 0:
-                f.write(b"0"); f.flush()
-            f.seek(0); msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return f
-    except OSError:
-        f.close()
-        return None
 
 
-def open_report_window():
-    """默认随后台打开只读查看器。已有交互终端直接输出；查看器不属于监听子进程。"""
-    if CFG.get("report_window") is False:
-        status_event("汇报窗口", "已按本机设置关闭自动开窗，状态仍写入日志")
-        return
-    if sys.stdout and sys.stdout.isatty():
-        status_event("汇报窗口", "实时汇报已在当前终端显示")
-        return
-    try:
-        lock = report_window_lock()
-        if lock is None:
-            status_event("汇报窗口", "已有自动汇报窗口，继续使用，不重复打开")
-            return
-        lock.close()
-        args = [sys.executable, "-u", os.path.abspath(__file__), "watch", "--auto"]
-        if sys.platform == "win32":
-            # pythonw 不附带控制台；查看器必须用同目录的 python.exe，且不能套 NOWIN。
-            if os.path.basename(args[0]).lower() == "pythonw.exe":
-                args[0] = os.path.join(os.path.dirname(args[0]), "python.exe")
-            subprocess.Popen(args, cwd=HOME, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10))
-        elif sys.platform == "darwin":
-            script = os.path.join(HOME, "logs", "实时汇报.command")
-            with open(script, "w", encoding="utf-8") as f:
-                f.write("#!/bin/sh\nexec " + shlex.join(args) + "\n")
-            os.chmod(script, 0o700)
-            r = run(["/usr/bin/open", "-a", "Terminal", script], timeout=15)
-            if r.returncode:
-                raise OSError((r.stderr or r.stdout or "Terminal 启动失败")[:200])
-        else:
-            if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-                raise OSError("没有图形桌面会话，无法开终端窗口；后台继续运行，状态写入 logs/status.jsonl")
-            terminals = [("x-terminal-emulator", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"), ("xterm", "-e")]
-            terminal = next(([exe, sep] for name, sep in terminals if (exe := shutil.which(name))), None)
-            if not terminal:
-                raise OSError("未找到终端程序；请安装桌面终端或在本机终端运行 agent.py watch")
-            subprocess.Popen(terminal + args, cwd=HOME, start_new_session=True)
-        status_event("汇报窗口", "已请求打开实时汇报窗口；窗口会自行显示最近记录和新状态")
-    except (OSError, subprocess.SubprocessError) as ex:
-        detail = report_text(ex)
-        status_event("汇报窗口未打开", detail)
-        notify("⚠️ 实时汇报窗口未打开", detail + "。后台继续运行；查看日志或在终端运行 agent.py watch。")
 
 
-def watch(once=False, auto=False):
-    lock = report_window_lock() if auto else None
-    if auto and lock is None:
-        console_write("已有自动汇报窗口，本窗口退出，不启动监听。")
-        return
-    console_write("群消息助手 · 实时汇报（只读查看，不启动第二套监听；Ctrl+C 只关闭查看窗口）")
-    last, shown, pulse = None, 0, time.monotonic()
-    try:
-        for rec in report_records(STATUS_LOG, follow=not once):
-            if rec is not None:
-                console_write(format_report(rec)); last = rec; shown += 1; pulse = time.monotonic()
-            else:
-                if time.monotonic() - pulse >= 60:
-                    console_write("等待新状态；最后记录：" + report_text((last or {}).get("time") or "暂无") + "。此窗口仅展示日志，进程存活和处理结果需结合状态核对。")
-                    pulse = time.monotonic()
-                time.sleep(0.5)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if lock:
-            lock.close()
-    if not shown:
-        console_write("尚无状态记录；请确认后台助手已启动，升级后已重启运行。")
 
 
 def status_snapshot():
@@ -838,11 +725,6 @@ EXECUTION_LOCK = threading.Lock()
 COMMITMENT_LOCK = threading.RLock()
 
 
-def _commit_transaction(fn):
-    def wrapped(*args, **kwargs):
-        with COMMITMENT_LOCK:
-            return fn(*args, **kwargs)
-    return wrapped
 
 
 def _text_for_task(e):
@@ -881,310 +763,36 @@ def task_key(e):
     return "|".join(sorted(set(ids)))
 
 
-def _commit_load():
-    try:
-        return json.load(open(COMMITMENTS_PATH, encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
 
 
-def _commit_save(d):
-    from package_runtime import atomic_write
-    with LOCK:
-        atomic_write(COMMITMENTS_PATH, json.dumps(d, ensure_ascii=False, indent=1).encode("utf-8"))
 
 
-def commitment_for_key(key):
-    return _commit_load().get(key) if key else None
 
 
-@_commit_transaction
-def commitment_start(no, draft, confirmation_event):
-    """草稿确认成功后建立承诺；后续同一事项只关联，不重复承诺或重复执行。"""
-    items = _open_load()
-    x = items.get(no) or {}
-    key = x.get("task_key") or task_key(x.get("event") or {})
-    if not key:
-        ev = x.get("event") or {}
-        if not ev.get("message_id"):
-            return None
-        key = "message:" + hashlib.sha256((str(ev.get("conversation_id")) + ":" + str(ev["message_id"])).encode()).hexdigest()[:24]
-    commits = _commit_load()
-    # 发出事实说明、谢意或拒接说明，不等于接受执行任务。
-    declined = bool(re.search(r"(?:我|本人)[^。！？；\n]{0,12}(?:不(?:再)?承接|不接(?:这|该|此)|不再负责|不再(?:执行|复核))", draft))
-    promised = bool(re.search(r"(?:我|我们)(?:会|将|来|负责|继续|按|补测|核验|复测|核实|验证|执行|跟进)", draft))
-    previous = commits.get(key)
-    previous_status = (previous or {}).get("status")
-    if previous and previous.get("confirmation_message_id") == confirmation_event.get("message_id"):
-        return previous
-    if not declined and not promised:
-        # 普通进度回复保留已有执行状态，尤其不能把等待、完成又重置成待执行。
-        if previous:
-            previous.setdefault("history", []).append({"at": dt.datetime.now().isoformat(timespec="seconds"),
-                "stage": "已补充回复", "detail": draft, "message_id": confirmation_event.get("message_id")})
-            _commit_save(commits)
-        return previous
-    conditional = not declined and bool(re.search(r"待.{0,60}(?:后|确认)|等.{0,60}(?:后|确认)|收到.{0,40}后|条件齐|前置.{0,12}(?:确认|齐)", draft))
-    state = "declined" if declined else "waiting_dependency" if conditional else "committed"
-    rec = commits.get(key) or {
-        "task_key": key, "status": "committed", "created_at": dt.datetime.now().isoformat(timespec="seconds"),
-        "original_message_ids": [], "conversation_ids": [], "evidence": [], "history": []
-    }
-    ev = x.get("event") or {}
-    message_ids = [ev.get("message_id")] + list(x.get("related_message_ids") or [])
-    conversation_ids = [x.get("cid")] + list(x.get("related_cids") or [])
-    for field, values in (("original_message_ids", message_ids), ("conversation_ids", conversation_ids)):
-        rec.setdefault(field, [])
-        for value in values:
-            if value and value not in rec[field]:
-                rec[field].append(value)
-    rec.update({"status": state, "commitment_text": draft, "scope": x.get("what", ""),
-                "confirmed_at": dt.datetime.now().isoformat(timespec="seconds"),
-                "confirmed_by": CFG.get("my_name"), "confirmation_message_id": confirmation_event.get("message_id")})
-    kind = execution_kind(draft)
-    if kind and not declined:
-        rec.update(execution_kind=kind, event=ev, queued_at=time.time(), execution_backend=(previous or {}).get("execution_backend") or ("local" if CFG.get("execution_jobs") else "external"))
-        # 已在执行的事项被再次确认，不重复启动一个测试进程。
-        if previous and previous_status in ("starting", "running"):
-            rec["status"] = previous_status
-    stage = "已拒接" if declined else "等待执行前置" if conditional else "执行任务已入队" if kind else "已承诺执行"
-    rec["next_action"] = "已明确不承接，不派发执行或复核" if declined else ("先核对约定前置，齐备后再执行" if conditional else "按已确认承诺继续执行并留证")
-    rec.setdefault("history", []).append({"at": dt.datetime.now().isoformat(timespec="seconds"), "stage": stage,
-                           "detail": "本人直接要求实际执行；原群尚未发送任何回复。" if confirmation_event.get("execution_direct") else ("拒接说明已发出，不建立执行承诺。" if declined else "草稿已由本人确认并成功发出；执行仍按已确认范围和前置，结果以证据为准。"),
-                           "message_id": confirmation_event.get("message_id")})
-    commits[key] = rec
-    _commit_save(commits)
-    status_event(stage, f"{no}：任务键 {key}；{rec['next_action']}", event=ev)
-    return rec
 
 
-@_commit_transaction
-def commitment_update(key, stage, detail="", evidence=None, status=None):
-    """追加执行阶段和证据路径；证据只记本地文件或已核对的 Jira / 附件引用。"""
-    if not key:
-        return None
-    commits = _commit_load(); rec = commits.get(key)
-    if not rec:
-        return None
-    rec["status"] = status or rec.get("status", "committed")
-    if detail:
-        rec["next_action"] = detail[:1000]
-    for path in evidence or []:
-        if path and path not in rec.setdefault("evidence", []):
-            rec["evidence"].append(path)
-    rec.setdefault("history", []).append({"at": dt.datetime.now().isoformat(timespec="seconds"),
-                                          "stage": stage, "detail": detail[:1000],
-                                          "evidence": list(evidence or [])})
-    _commit_save(commits)
-    return rec
 
 
-@_commit_transaction
-def _execution_patch(key, **fields):
-    commits = _commit_load()
-    if key in commits:
-        commits[key].update(fields)
-        _commit_save(commits)
 
 
-def execution_kind(text):
-    if re.search(r"回归", text) and re.search(r"接口|自动化", text):
-        return "regression"
-    if re.search(r"复测|复验|重测", text):
-        return "retest"
-    return ""
 
 
-def execution_requested(text):
-    """当前本人指令才可入队；询问进度、条件计划、草稿和否定语句都不当授权。"""
-    text = str(text or "").strip()
-    if not execution_kind(text) or re.search(r"[?？]$|为什么|何时|什么时候|了吗|了没|有没有|是否|尚未|还没|没(?:有)?(?:做|跑|执行)", text):
-        return False
-    if re.search(r"(?:别|不要|不用|不必|先不|暂不|待|等待|等到|如果|草稿|起草|改写|翻译|解释)", text):
-        return False
-    return bool(re.match(r"^(?:请|你|帮我|给我|现在|立即|马上|继续|先|再|开始|跑|执行|进行|重新|补跑|复测|复验|重测)", text))
 
 
-def enqueue_owner_execution(event, text):
-    no = open_add(event, "execution", "本人已明确要求执行")
-    rec = commitment_start(no, "我会执行：" + text, {**event, "execution_direct": True})
-    if rec:
-        route = "已进入本机测试队列，尚未运行" if rec.get("execution_backend") == "local" else "已记录，等待当前值守助手的实际执行回执"
-        notify("▶ 执行任务已登记", event_context(event, no) + "\n任务：" + text +
-               "\n当前状态：" + route + "；运行、日志和结果分别记录。")
-    return rec
 
 
-def execution_snapshot(limit=None):
-    rows = sorted([x for x in _commit_load().values() if x.get("execution_kind")],
-                  key=lambda x: x.get("queued_at", 0), reverse=True)
-    return rows[:limit] if limit is not None else rows
 
 
-def execution_notice(key, stage, detail):
-    rec = _commit_load().get(key) or {}
-    event = rec.get("event") or {}
-    commitment_update(key, stage, detail)
-    status_event(stage, detail, event=event)
-    if notify(stage, event_context(event) + "\n任务：" + str(rec.get("commitment_text", "")) + "\n" + detail):
-        _execution_patch(key, last_notice=time.time())
 
 
-def recover_executions():
-    # 进程退出时外部测试可能仍在运行，不自动重跑未知结果的任务。
-    for rec in execution_snapshot():
-        if rec.get("execution_backend") != "external" and rec.get("status") in ("starting", "running"):
-            commitment_update(rec["task_key"], "执行中断", "服务重启，先核对既有运行编号与日志，禁止自动重跑。", status="interrupted")
-            execution_notice(rec["task_key"], "⚠️ 执行中断待核实", "已有运行结果未知，原日志保留；需要核对后再决定是否重试。")
 
 
-def run_execution(key):
-    """只运行本机预先配置的测试入口；不执行消息中的命令，不用回复文本充当测试结果。"""
-    with EXECUTION_LOCK:
-        rec = _commit_load().get(key) or {}
-        if rec.get("status") != "committed" or not rec.get("execution_kind") or rec.get("execution_backend") == "external":
-            return False
-        job = (CFG.get("execution_jobs") or {}).get(rec["execution_kind"]) or {}
-        cmd = job.get("command")
-        event = rec.get("event") or {}
-        if (not isinstance(cmd, list) or not cmd or not all(isinstance(x, str) and x for x in cmd)
-                or job.get("environment") != "test" or not job.get("cwd")
-                or re.search(r"正式服|生产|production", str(rec.get("commitment_text")) + event_text(event), re.I)):
-            reason = "未执行：缺少已配置的测试入口、测试环境或工作目录，或消息涉及生产范围；需核实执行条件。"
-            commitment_update(key, "执行前置阻塞", reason, status="waiting_resources")
-            execution_notice(key, "⚠️ 回归/复测尚未执行", reason)
-            return False
-        jobdir = os.path.abspath(os.path.expanduser(job["cwd"]))
-        run_id = str(time.time_ns())
-        directory = os.path.join(HOME, "logs", "executions", run_id)
-        os.makedirs(directory, exist_ok=True)
-        taskfile, resultfile, logfile = [os.path.join(directory, name) for name in ("task.json", "result.json", "output.log")]
-        with open(taskfile, "w", encoding="utf-8") as f:
-            json.dump({"task_key": key, "request": rec["commitment_text"], "event": event,
-                       "environment": "test", "run_id": run_id}, f, ensure_ascii=False)
-        _execution_patch(key, status="starting", execution_run={"id": run_id, "log": logfile, "result": resultfile,
-                         "environment": "test", "program": os.path.basename(cmd[0])})
-        process = None
-        try:
-            env = {**os.environ, "QA_EXECUTION_TASK": taskfile, "QA_EXECUTION_RESULT": resultfile}
-            with open(logfile, "wb") as out:
-                process = subprocess.Popen(cmd, cwd=jobdir, env=env, stdin=subprocess.DEVNULL,
-                                           stdout=out, stderr=subprocess.STDOUT, **NOWIN,
-                                           **({} if os.name == "nt" else {"start_new_session": True}))
-                CHILDREN.append(process)
-                _execution_patch(key, status="running", started_at=time.time(), last_progress=time.time())
-                execution_notice(key, "▶ 回归/复测实际开始", "已启动测试入口；运行编号：" + run_id + "\n日志：" + logfile)
-                deadline = time.monotonic() + max(60, min(7200, int(job.get("timeout") or 3600)))
-                next_report = time.monotonic() + 120
-                while True:
-                    try:
-                        code = process.wait(timeout=1)
-                        break
-                    except subprocess.TimeoutExpired:
-                        if time.monotonic() >= deadline:
-                            # 不杀结果未知的外部任务，不在旁边再启动一轮。
-                            raise TimeoutError("测试入口超时，进程可能仍在执行；禁止自动重跑，请核对原运行编号。")
-                        if time.monotonic() >= next_report:
-                            _execution_patch(key, last_progress=time.time())
-                            execution_notice(key, "⏳ 回归/复测执行中", "运行编号：" + run_id + "\n日志：" + logfile + "\n尚未取得最终结果，继续等待。")
-                            next_report = time.monotonic() + 120
-            with open(resultfile, encoding="utf-8") as f:
-                result = json.load(f)
-            summary = result.get("summary") if isinstance(result, dict) else None
-            if not isinstance(summary, str) or not summary.strip():
-                raise ValueError("执行入口未提供有效结果摘要")
-            total, passed = result.get("total"), result.get("passed")
-            evidence = result.get("evidence") or []
-            if not isinstance(evidence, list) or not all(isinstance(p, str) for p in evidence):
-                raise ValueError("执行证据清单格式无效")
-            paths = [os.path.abspath(os.path.join(jobdir, p)) for p in evidence]
-            if result.get("status") == "passed":
-                if (code != 0 or type(total) is not int or type(passed) is not int or total <= 0
-                        or passed != total or not paths or not all(os.path.isfile(p) for p in paths)
-                        or result.get("environment") != "test" or not result.get("version_start")
-                        or result.get("version_start") != result.get("version_end")):
-                    raise ValueError("不能确认通过：退出码、测试数量、真实报告或同版本证据不完整")
-                state, title = "completed", "✅ 回归/复测已通过"
-            elif result.get("status") == "blocked":
-                state, title = "waiting_dependency", "⚠️ 回归/复测存在阻塞"
-            else:
-                # 失败只提醒本人排查，不能据此直接认定接口缺陷或发原群。
-                state, title = "failed", "⚠️ 回归/复测待排查"
-            run = dict((_commit_load().get(key) or {}).get("execution_run") or {})
-            run.update(exit_code=code, result_status=result.get("status"), total=total, passed=passed, version_start=result.get("version_start"), version_end=result.get("version_end"))
-            _execution_patch(key, execution_run=run)
-            commitment_update(key, title, summary, evidence=[logfile, resultfile] + paths, status=state)
-            execution_notice(key, title, summary + "\n运行编号：" + run_id + "\n日志：" + logfile + "\n结果先排平台、数据和合同，确认接口问题后再按授权汇报原群。")
-            if state == "completed" and event.get("conversation_id") in CFG.get("groups", {}) and can_reply(event["conversation_id"]):
-                stage_draft(event, summary + f"\n本轮 {passed}/{total} 通过；运行编号：{run_id}。", "本轮实际测试全部通过，准备结果汇报，仍需本人确认发送。")
-        except (OSError, ValueError, TypeError, TimeoutError) as ex:
-            state = "interrupted" if isinstance(ex, TimeoutError) else "failed"
-            commitment_update(key, "执行异常", str(ex), evidence=[logfile], status=state)
-            execution_notice(key, "⚠️ 回归/复测执行异常", str(ex) + "\n日志：" + logfile + "\n未计通过，不自动重跑。")
-        finally:
-            if process is not None and process.poll() is not None:
-                if process in CHILDREN:
-                    CHILDREN.remove(process)
-        return True
 
 
-def external_execution_progress(value):
-    """已有值守助手回传真实进度；只登记，不另起执行进程、不发送原群。"""
-    if not isinstance(value, dict):
-        raise ValueError("执行回执格式无效")
-    key, state = value.get("task_key"), value.get("status")
-    rec = _commit_load().get(key) or {}
-    if not rec.get("execution_kind") or rec.get("execution_backend") != "external":
-        raise ValueError("未找到交由外部值守的执行任务")
-    if state not in ("running", "completed", "waiting_dependency", "waiting_resources", "failed", "interrupted"):
-        raise ValueError("执行状态无效")
-    detail = value.get("detail")
-    if not isinstance(detail, str) or not detail.strip():
-        raise ValueError("请提供实际进展或阻塞说明")
-    run = dict(rec.get("execution_run") or {})
-    if state in ("running", "completed"):
-        run_id, log_path = value.get("run_id"), value.get("log")
-        if not run_id or not isinstance(log_path, str) or not os.path.isfile(log_path):
-            raise ValueError("实际运行需提供运行编号与已存在的日志")
-        run.update(id=str(run_id), log=log_path, environment=value.get("environment"))
-    evidence = value.get("evidence") or []
-    if not isinstance(evidence, list) or not all(isinstance(p, str) and os.path.isfile(p) for p in evidence):
-        raise ValueError("执行证据不存在或格式无效")
-    if state == "completed":
-        total, passed = value.get("total"), value.get("passed")
-        if (type(total) is not int or type(passed) is not int or total <= 0 or passed != total
-                or type(value.get("exit_code")) is not int or value.get("exit_code") != 0 or not evidence or value.get("environment") != "test"
-                or not value.get("version_start") or value.get("version_start") != value.get("version_end")):
-            raise ValueError("不能确认通过：数量、退出码、同版本或报告不完整")
-        run.update(total=total, passed=passed, exit_code=0, version_start=value["version_start"], version_end=value["version_end"])
-    _execution_patch(key, execution_run=run, last_progress=time.time())
-    commitment_update(key, "值守执行回执", detail, evidence=evidence, status=state)
-    status_event("值守执行回执", detail, event=rec.get("event"))
-    return _commit_load()[key]
 
 
-def check_executions(now=None):
-    now = now or time.time()
-    for rec in execution_snapshot():
-        state = rec.get("status")
-        age = now - rec.get("queued_at", now)
-        stalled_external = rec.get("execution_backend") == "external" and state == "running" and now - rec.get("last_progress", now) >= 600
-        overdue = stalled_external or (state == "committed" and age >= 120) or (state in ("waiting_resources", "waiting_dependency", "failed", "interrupted") and age >= 7200)
-        interval = 600 if state in ("committed", "running") else 7200
-        if overdue and now - rec.get("last_notice", 0) >= interval:
-            execution_notice(rec["task_key"], "⚠️ 执行任务仍未完成", "状态：" + state + "\n" + str(rec.get("next_action") or "请核对原运行与前置，不能把消息已回复视为测试完成。"))
 
 
-def execution_worker():
-    while SERVICE_RUNNING and not UPDATE_EXIT.is_set():
-        for rec in execution_snapshot():
-            if rec.get("status") == "committed" and rec.get("execution_backend") == "local":
-                try:
-                    run_execution(rec["task_key"])
-                except Exception as ex:
-                    commitment_update(rec["task_key"], "执行通道异常", type(ex).__name__, status="failed")
-                    execution_notice(rec["task_key"], "⚠️ 执行通道异常", "任务已保留，需要检查执行入口；未计通过。")
-        UPDATE_EXIT.wait(2)
 
 
 def _open_load():
@@ -1283,26 +891,47 @@ def mark_withdrawn(e, reason="消息已撤回，无法继续处理"):
     status_event("消息已撤回", reason, event=e)
 
 
+TASK_ID = re.compile(r"\b[A-Z][A-Z0-9]{1,15}-\d+(?:-\d+)?\b")   # 单号：需求 / 缺陷 / 任务编号这类「大写字母-数字」的写法，各项目通用
+
+
+def _quoted_id(e):
+    q = (e or {}).get("quoted_message") or (e or {}).get("quotedMessage") or {}
+    return q.get("message_id") or q.get("openMessageId") or q.get("messageId") or q.get("msgId") if isinstance(q, dict) else None
+
+
+REPLIED = {}   # 本人（或代本人值守）已引用回复过的原消息 ID → 时间；AI 草稿晚于本人回复生成时据此直接作废（11-23 #USbGg）
+
+
+def already_replied(e):
+    t = REPLIED.get((e or {}).get("message_id"))
+    return bool(t and time.time() - t < 6 * 3600)
+
+
 def close_by_conversation(cid, reply_event=None):
-    """本人亲自回复后只关闭对应事项，不能因同群另一条消息误关全部事项。"""
+    """本人（或代本人值守的程序，用本人身份发的）在原会话回复后，关闭对应事项（11-23 用户：已处理的不能还挂在草稿待发）。
+    对应关系：① 引用了那条消息；② 没引用，但回复里提到的单号（COMIC-1999-092 / TICKET-845 / OPS-…）和某件事一样。
+    同群只是说了别的话、对不上任何一件，就都保留，不误关。助手自己发出去的草稿（OUT 里有）在 relevant 里已排除，不会走到这里。"""
     items = [(no, x) for no, x in _open_load().items() if x.get("cid") == cid]
     if not items:
         return
-    quoted_id = ((reply_event or {}).get("quoted_message") or {}).get("message_id")
+    quoted_id = _quoted_id(reply_event)
     if quoted_id:
-        items = [(no, x) for no, x in items if (x.get("event") or {}).get("message_id") == quoted_id]
+        REPLIED[quoted_id] = time.time()
+    if quoted_id:
+        hit = [(no, x) for no, x in items if (x.get("event") or {}).get("message_id") == quoted_id]
     else:
-        # 同群发言不等于处理了这个事项；没有引用关联就保留，避免误关其他待决事项。
-        return
-    if (reply_event or {}).get("messageAiSendFlag"):
-        status_event("工具回复待核对", "检测到其他工具发出的回复，未当成本人确认、未关闭待办", event=reply_event)
-        return
-    for no, x in items:
+        hit = []
+    if not hit:
+        ids = set(TASK_ID.findall(str((reply_event or {}).get("content") or "")))
+        q = (reply_event or {}).get("quoted_message") or (reply_event or {}).get("quotedMessage") or {}
+        ids |= set(TASK_ID.findall(str(q.get("content") or "") if isinstance(q, dict) else ""))
+        if ids:
+            hit = [(no, x) for no, x in items if ids & set(TASK_ID.findall(str((x.get("event") or {}).get("content") or x.get("what") or "")))]
+    for no, x in hit:
         f, _ = draft_by_no(no)
         open_close(no, "你已在该会话回复", reply_event)
         if f and os.path.exists(f):
             os.remove(f)
-
 
 # ---- 表情（v2.6）：原生表情回应 + 内置表情包（ChineseBQB）
 STICKERS = os.path.join(MEMDIR, "表情包.json")     # {名字: 图片地址}
@@ -1535,9 +1164,6 @@ def ask_ai(no, question):
         notify(f"❓ 没找到 {no}", "可能已经处理完了。发「待回复」看还有哪些。"); return
     ev = (d or {}).get("event") or x.get("event") or {}
     JOB_CONTEXT.event = ev
-    if execution_requested(question):
-        enqueue_owner_execution({**ev, "message_id": "request-" + str(time.time_ns())}, question)
-        return
     verify = verification_requested(question)
     images, media_errors = image_inputs([ev])
     if media_errors:
@@ -1554,9 +1180,9 @@ def ask_ai(no, question):
               f"## 原消息\n{json.dumps(ev, ensure_ascii=False)}\n\n## 现在的草稿\n{draft or '（还没有）'}\n\n## 之前的判断依据\n{(x or {}).get('reason') or (d or {}).get('reason') or ''}\n\n"
               f"## 之前问过的\n{json.dumps(qa, ensure_ascii=False)}\n\n## 我的问题\n{question}")
     if verify:
-        prompt += ("\n\n## 本人要求实际核查\n现在执行职责范围内的只读接口核验，不能只答复计划；用自己的既有QA客户端，登录信息仅留内存，禁止读取、打印或复制凭据。"
+        prompt += ("\n\n## 本人要求实际核查\n现在用你已有的工具做职责范围内的只读核查，不能只答复计划；登录信息仅留内存，禁止读取、打印或复制凭据。"
                    "先核对执行环境是否允许联网；DNS失败不能直接判成本机网络故障。对照研发示例逐项核对请求参数，只用本次真实响应下结论，注明时间、版本、范围和未完成项。"
-                   "证据只写当前助手目录的 logs/verification 下，不改平台配置或用例，不创建、删除业务数据，不执行付费或正式服写操作。"
+                   "证据只写当前助手目录的 logs/verification 下，不改任何配置，不创建、删除业务数据，不执行付费或正式服写操作。"
                    "不提交、不推送，不发原群，不重启服务；需要额外授权就说明卡在哪。完成后依然只输出上述JSON，由助手向本人汇报。")
         raw = ai_exec(prompt, timeout=600, images=images or None, verify=True)
     else:
@@ -1619,7 +1245,7 @@ def answer_user(e, question):
                 pass
     except OSError:
         pass
-    context = {"status": status_snapshot(), "pending": _open_load(), "execution": _commit_load()}
+    context = {"status": status_snapshot(), "pending": _open_load()}
     try:
         import console
         if console.A:
@@ -1636,7 +1262,7 @@ def answer_user(e, question):
         return
     prompt = ('本人正在调试通知群直接和你对话。先给结论，再逐项回答，简体中文；无需本人写#编号或固定口令。'
               '按结论、详情、下一步分段，列表每项一件事；要求详细时完整写原因、之前的协调和现在结果，不限制行数，不漏子问题。'
-              '结合引用、近期问答及真实发送/执行记录。仅当问题涉及发送或验收时说明各自状态，不要每条机械附“已回复/验收完成”。不能把客户端QA职责转给接口QA。'
+              '结合引用、近期问答及真实发送/执行记录。仅当问题涉及发送或验收时说明各自状态，不要每条机械附“已回复/验收完成”。不要把别的角色的职责揽到自己身上，也不要把自己的推给别人。'
               '只在确实缺少必要信息时问一个具体问题，不得只回“收到”“请写编号”。'
               '只输出JSON：{"answer":"给本人的正常答复"}。不能假称已执行、已发送、已修好或验收通过；'
               '本次不得发其他群、改配置、改状态、修改文件、重启或推送。凭据不读取不打印。'
@@ -1693,9 +1319,13 @@ def quoted_action_nos(quoted):
 def command_text(e):
     """确认可以只引用机器人消息；正文显式编号优先，引用多事项时不猜。"""
     text = re.sub(r'^(?:<@[^>]+>|@[^\s]+)\s*', '', str(e.get("content") or "").strip()).strip()
+    # 口语说法当「不归我」（11-23：本人引用提醒回「和我无关，无需回复」，被当成追问，没关掉这件事）
+    m = re.match(r"^(#[A-Za-z0-9]{3,8}\s*)?((?:和我|与我)无关|不关我的?事|无需回复|不用回复?|不需要回复?|不用管|不是我的事?)(.*)$", text, re.S)
+    if m:
+        text = (m.group(1) or "") + "不归我：" + (m.group(2) + m.group(3)).strip()
     if re.search(r"#[A-Za-z0-9]{3,8}", text):
         return text
-    if not re.match(r"(?:(?:全部(?:可以)?发送|可以(?:发送|发)?|发送|发出|发吧|发|不发|不归我|手动已处理)(?=$|[\s，,。！!：:])|(?:改成|暂存|问)[：:])", text):
+    if not re.match(r"(?:(?:全部(?:可以)?发送|可以(?:发送|发)?|发送|发出|发吧|发|不发|不归我|手动已处理|已处理|处理了|处理完了)(?=$|[\s，,。！!：:])|(?:改成|暂存|问)[：:])", text):
         return text
     q = e.get("quoted_message") or e.get("quotedMessage") or {}
     quoted = str(q.get("content") or q.get("text") or "")
@@ -1742,9 +1372,6 @@ def command(e):
     text = command_text(e)
     if text is None:
         return
-    if execution_requested(text):
-        enqueue_owner_execution(e, text)
-        return
     if text == "升级":
         threading.Thread(target=perform_update, daemon=True).start(); return
     if re.fullmatch(r"(一键)?清空(待回复)?", text):
@@ -1757,7 +1384,7 @@ def command(e):
         if f and os.path.exists(f):
             os.remove(f)
         return
-    m = re.match(r"(#[A-Za-z0-9]{3,8})\s*手动已处理(?:[：:]\s*(.*))?$", text, re.S)
+    m = re.match(r"(#[A-Za-z0-9]{3,8})\s*(?:手动已处理|已处理|处理了|处理完了)(?:[：:]\s*(.*))?$", text, re.S)   # 钉钉里说「#编号 已处理」也行（11-23）
     if m:
         f, _ = draft_by_no(m.group(1))
         note = (m.group(2) or "").strip() or "已由本人线下处理"
@@ -1810,14 +1437,6 @@ def command(e):
                 if st:
                     send_sticker(d["event"], st)
                 audit(no, d["event"], d["draft"], text, sticker=st, reason=d.get("reason", ""))
-                # 发送成功只代表草稿已获准并发出；对应的 QA 任务进入承诺执行态，
-                # 后续由值守继续核验、留证和回执，不再要求本人重复下第二条指令。
-                try:
-                    commitment_start(no, d["draft"], e)
-                except Exception as ex:
-                    # 原会话已经发送成功，不能把本地承诺落盘失败误报成“消息发送失败”。
-                    log("承诺记录失败", no, repr(ex))
-                    notify("⚠️ 承诺记录失败", f"{no} 已发出，但本地 commitments.json 写入失败：{repr(ex)[:200]}；请保留这条确认消息，稍后补记。")
                 # 先写“已处理”和发送留痕，再删草稿；这样旧版/异常进程不会把已发消息重新显示在“要你判断”。
                 open_close(no, "已按你确认发出：" + d["draft"][:100])
                 if os.path.exists(f):
@@ -2016,21 +1635,7 @@ def relevant(e):
             return False                                                   # 助手发的表情包（以本人身份发），不算本人亲自回复
         mine = re.sub(r"\s+", "", str(e.get("content") or ""))
         if not any(mine and (mine in k or k in mine) for k, t in OUT.items() if time.time() - t < 900):
-            quote = (e.get("quoted_message") or {}).get("message_id")
-            if quote and any(_event_id(x.get("event")) == quote for x in _open_load().values()):
-                # 事件流可能不带发送来源；查原消息，DWS发送不能冒充本人亲自确认。
-                r = run([DWS, "chat", "+messages-mget", "--msg-ids", e["message_id"],
-                         "--no-reactions", "--no-threads", "--format", "json"], timeout=30)
-                try:
-                    data = json.loads(r.stdout)
-                    rows = data.get("messages") or []
-                    if r.returncode or data.get("complete") is not True or data.get("failures") or not rows:
-                        raise ValueError("未取得完整回复来源")
-                    e = {**e, "messageAiSendFlag": rows[0].get("messageAiSendFlag")}
-                except (ValueError, TypeError):
-                    status_event("回复来源待核对", "无法确认是本人亲自回复，原待办保留", event=e)
-                    return False
-                close_by_conversation(e.get("conversation_id"), e)
+            close_by_conversation(e.get("conversation_id"), e)            # 本人或代本人值守用本人身份回了：对得上的事项移到「已处理」
         return False
     if not sender or "机器人" in sender:
         return False
@@ -2322,8 +1927,8 @@ def decide(batch):  # noqa: C901
               '"memory": {"负责人": [{"事项": "", "负责人": "", "在哪找": ""}], "问题处理": [{"问题": "", "处理": "", "谁": "", "结论": ""}]}}\n'
               "正文或引用里提到本人的姓名、钉钉 mention 元数据、原始 <@id> 都需判断；不能仅因还 @ 了别人就忽略。未知 ID 只表示要判断，不能猜成本人。mine=true 只在确实找本人且职责明确时；拿不准就 mine=false、action=escalate，不能 ignore。"
               "risk=low 只用于：回「收到，谢谢」、转述记忆里已有的明确信息；其余一律 high。"
-              "硬规则（违反就是错）：1）已明确 @ 我且属于 QA 接口自动化、回归、合同核验、测试服或正式服验证的消息，直接按 QA 职责承接并核实；不得因为消息是在派活、安排验证或涉及线上验证，就泛化成必须本人拍板。"
-              "2）先排除测试平台、用例脚本、合同、测试数据和前置变量问题；能在 QA 侧修正的先修正并重跑，不能修正时到对应群真实 @ 研发、项目助手 或数据负责人，说明已核实内容、缺什么和下一步，并登记跟进。"
+              "硬规则（违反就是错）：1）已明确找我、且属于工作手册「我的职责范围 / 按角色」里写明的事，直接按职责承接并核实；不要因为消息是在派活或安排工作，就一律当成必须本人拍板。"
+              "2）核实时先排除自己这边能排除的原因（自己的工具、数据、配置），能自己修正的先修正；需要别人配合时，到对应群真实 @ 对方，说明已核实的内容、缺什么和下一步。"
               "3）只有新需求、权限/资源、排期承诺、产品取舍或只有本人能执行的动作，才 escalate 给本人；消息内容不在职责范围内时才 escalate 或 ignore。"
               "4）只回答职责范围内、记忆或待办里有明确依据的事实性问题；没有依据先核实，不凭空给结论。"
               "5）mine=false 时 action 只能是 escalate 或 ignore，群里不回任何话（包括「收到」「我确认一下」），由我自己确认是不是归我。"
@@ -2475,9 +2080,8 @@ def escalation_draft(batch, decision):
     if text:
         return text
     e = batch[-1]
-    # 泛化的“派活/要不要接”没有事实性回复可起草，不调用 AI 只留下拍板事项；
-    # QA 验证、回归、合同和环境问题才需要生成可审核的安全草稿。
-    if not any(k in str(e.get("content") or "") for k in ("接口", "回归", "合同", "测试服", "正式服", "验证", "复测")):
+    # 只给明确找本人、且不是排期 / 需求 / 权限 / 承诺这类要本人拍板的事补一版安全草稿（各角色通用，不再按 QA 关键词判断，11-23）。
+    if decision.get("mine") is not True or re.search(r"排期|需求|权限|资源|承诺|拍板|取舍|分配|派活|接活|承接", str(decision.get("reason") or "")):
         return ""
     prompt = ("你是群消息助手，只负责给下面这条消息起草一段供本人审核的回复。只输出一行 JSON："
               '{"draft": "回复正文"}\n'
@@ -2497,12 +2101,10 @@ def escalation_draft(batch, decision):
     # 避免事项只停在「要你判断」而让本人从空白开始写。
     if not text:
         content = str(e.get("content") or "")
-        qa_task = any(k in content for k in ("接口", "回归", "合同", "测试服", "正式服", "验证", "复测"))
-        if e.get("conversation_id") in CFG.get("groups", {}).keys() and qa_task:
-            text = ("已收到，我会按 QA 范围核对本次验证项和现网约束。\n"
-                    "先排除平台、合同、数据和前置变量问题；需要研发或数据侧配合的，我会在对应群说明核实结果和缺口。\n"
-                    "证据闭环后再同步结论。")
+        if e.get("conversation_id") in CFG.get("groups", {}).keys() and content:
+            text = "收到，我先核对一下我这边负责的部分，有结论或需要大家配合的地方再在这里说。"
     return text[:2000]
+
 
 
 def handle(batch):
@@ -2517,6 +2119,8 @@ def handle(batch):
     ats = re.findall(r"@([^\s@，,：:;；\n]+)", str(e.get("content") or ""))
     if ats and not event_mentions_me(e) and not re.search(r"<@[^>]+>", event_text(e)) and not any(x in ("所有人", "全体成员") for x in ats):  # 未知 <@id> 不再误判为别人；正文/引用提到本人仍进入判断
         log("别人之间的对话，不回", e.get("sender"), ats[:3]); return "别人之间的对话，不回复、不生成草稿"
+    if already_replied(e):                                             # 本人已经引用回复过这条：不再出草稿 / 提醒
+        log("本人已回复过，不再出草稿", e.get("sender")); return "本人已在原会话回复，不再生成草稿"
     if d.get("action") == "ignore":
         return "不回复：" + (d.get("reason") or "按职责和群规则跳过")
     brief = event_context(e) + f"\n原消息：{e.get('sender')}：{str(e.get('content'))[:200]}"
@@ -2691,7 +2295,6 @@ def supervisor():
         if SERVICE_RUNNING:
             sync_listeners()
             check_owner_commands()
-            check_executions()
             import_notification_outbox()
         now = time.time()
         for tag, (args, _) in ([] if SERVICE_RUNNING else list(LISTENER_SPECS.items())):
@@ -2975,10 +2578,6 @@ def check():
 
 
 def main():
-    if len(sys.argv) >= 2 and sys.argv[1] == "watch":
-        if sys.argv[2:] not in ([], ["--once"], ["--auto"]):
-            raise SystemExit("用法：python agent.py watch [--once]")
-        return watch(once="--once" in sys.argv[2:], auto="--auto" in sys.argv[2:])
     if len(sys.argv) >= 2 and sys.argv[1] == "setup-notify":
         opt = dict(zip(sys.argv[2::2], sys.argv[3::2]))                   # --group 群名/cid  --webhook 地址  --secret SEC…
         setup_notify(group=opt.get("--group", ""), webhook=opt.get("--webhook", ""), secret=opt.get("--secret", "")); return
@@ -3022,7 +2621,6 @@ def main():
     global SERVICE_RUNNING
     SERVICE_RUNNING = True
     recover_owner_commands()
-    recover_executions()
     update_receipt()
     if os.path.exists(STATUS_LOG):
         cutoff = (dt.datetime.now() - dt.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
@@ -3038,8 +2636,6 @@ def main():
         for e in json.load(open(queue_file, encoding="utf-8")):
             Q.put(e); SEEN.add(e.get("message_id"))
         os.remove(queue_file)
-    open_report_window()
-    threading.Thread(target=execution_worker, daemon=True).start()
     sync_listeners()
     workers = [threading.Thread(target=worker, daemon=True) for _ in range(max(1, int(CFG["workers"])))]
     for w in workers:
@@ -3092,7 +2688,7 @@ def main():
             for w in workers:
                 w.join(timeout=1)
             # 已开始的判断完成后再退出；未开始的批次落盘，重启后继续。
-            while BUSY["n"] or OWNER_ACTIVE["message_id"] or any(x.get("execution_backend") == "local" and x.get("status") in ("starting", "running") for x in execution_snapshot()):
+            while BUSY["n"] or OWNER_ACTIVE["message_id"]:
                 time.sleep(1)
             _stop_children()
             pending = []

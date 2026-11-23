@@ -83,11 +83,10 @@
   <div class="guide-layout">
     <div>
       <div class="step-card" id="s1"><div class="step-heading"><span class="no">01</span><h3>下载部署文档，直接开始</h3></div>
-        <ul class="pts"><li>把文档拖给你的 AI 助手，发「开始」；AI 会按步骤完成配置，不需要先找安装目录</li><li>想一键安装或以后方便升级，再按下面的可选入口下载对应系统安装包</li></ul>
-        <div class="hero-actions" style="margin-top:14px"><a class="button primary" href="files/doc0.md" download="{{DOC0}}">下载部署文档</a><button class="button ghost" data-copy-doc>复制部署文档</button><a class="button ghost" href="view.html?f=doc0.md&n={{DOC0}}">在线看全文</a></div>
-        <div class="hero-actions"><a class="link-button" data-package="windows" href="{{PACKAGE_WINDOWS}}" download>可选：Windows 安装包</a><a class="link-button" data-package="macos" href="{{PACKAGE_MACOS}}" download>macOS 安装包</a><a class="link-button" data-package="linux" href="{{PACKAGE_LINUX}}" download>Linux 安装包</a></div></div>
+        <ul class="pts"><li>把文档拖给你的 AI 助手，发「开始」；AI 按步骤装好程序、完成配置</li><li>以后升级不用再拖文档：提醒群收到新版本通知，回「<b>升级</b>」就行</li></ul>
+        <div class="hero-actions" style="margin-top:14px"><a class="button primary" href="files/doc0.md" download="{{DOC0}}">下载部署文档</a><button class="button ghost" data-copy-doc>复制部署文档</button><a class="button ghost" href="view.html?f=doc0.md&n={{DOC0}}">在线看全文</a></div></div>
       <div class="step-card" id="s2"><div class="step-heading"><span class="no">02</span><h3>把文档交给 AI，发「开始」</h3></div>
-        <ul class="pts"><li>AI 会确认身份、职责、群和提醒方式，再建立记忆</li><li>已经运行安装包的用户也从这里继续；不能运行安装包时按文档第三节手动安装</li></ul>
+        <ul class="pts"><li>AI 会确认身份、职责、群和提醒方式，再建立记忆</li></ul>
         <div class="cmd"><code>开始</code><button class="copy-button" data-copy="开始">复制</button></div></div>
       <div class="step-card" id="s3"><div class="step-heading"><span class="no">03</span><h3>确认角色、职责范围和回复规则</h3></div>
         <ul class="pts"><li><b>有协作库</b>：按协作库认出你的角色和职责</li>
@@ -101,7 +100,7 @@
         <li>把 Webhook 地址和 SEC 密钥<b>直接发在群里</b>，助手自动写进配置、发一条自检，<mark>不用改任何文件</mark></li></ul></div>
       <div class="step-card" id="s5"><div class="step-heading"><span class="no">05</span><h3>配置后自检，确认各项通过</h3></div>
         <ul class="pts"><li>AI 助手跑一次自检，并下载内置表情包索引</li>
-        <li>安装包已设好<b>每天 09:00 和登录时自动启动</b>，AI 核对即可（Windows 计划任务 / macOS LaunchAgent / Linux systemd）</li>
+        <li>设好<b>每天 09:00 和登录时自动启动</b>（Windows 计划任务 / macOS LaunchAgent / Linux systemd）</li>
         <li>自检各项通过，并能打开操作台；提醒群收到「<b>助手自检</b>」说明机器人已连通</li></ul>
         <div class="cmd"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py check">复制</button></div></div>
     </div>
@@ -133,8 +132,8 @@
   <div class="step-card" style="margin-top:24px">
     <div class="step-heading"><span class="no">①</span><h3>提醒群收到新版本通知后，回</h3></div>
     <div class="cmd"><code>升级</code><button class="copy-button" data-copy="升级">复制</button></div>
-    <ul class="pts"><li>助手下载对应安装包，校验通过后替换程序、重启，并在提醒群回执新版本</li><li>配置、记忆、草稿和个人规则保留；不回复就不升级</li></ul>
-    <div class="callout">3.0 及更早版本首次转到 3.1：先用上方安装包升级一次，以后在提醒群回「升级」即可。不必重建已有记忆。</div>
+    <ul class="pts"><li>助手下载升级包，校验通过后替换程序、重启，并在提醒群回执新版本</li><li>配置、记忆、草稿和个人规则保留；不回复就不升级</li></ul>
+    <div class="callout">3.0 及更早版本还不会自动升级：这一次把最新部署文档拖给 AI 发「升级到最新版」，以后在提醒群回「升级」即可。不必重建已有记忆。</div>
   </div>
 </section>
 
@@ -151,7 +150,6 @@
     <details><summary>会读我的私聊吗？</summary><p>默认不读私聊，只监听部署时你选的群。</p></details>
     <details><summary>凭据存在哪？</summary><p>都在你自己的电脑上（Windows <code>%USERPROFILE%\.qa-agent\config.json</code>，macOS / Linux <code>~/.qa-agent/config.json</code>），不上传、不进仓库；钉钉登录由你自己扫码。</p></details>
     <details><summary>用哪个 AI？</summary><p>你平时用哪个就用哪个，账号、API Key 你自己配，我们不管。部署时 AI 助手会把自己记成「判断用的 AI」；想换就对 AI 助手说「判断改用 Claude Code」。</p></details>
-    <details><summary>安装包会替我登录或安装依赖吗？</summary><p>不会。需要 Python 3.10+、钉钉 CLI、Git、Node 和一个可用 AI 命令行；缺什么会用中文提示。钉钉登录由你本人运行 dws auth login 扫码完成，不需要管理员权限。</p></details>
     <details><summary>Mac 上装在哪？</summary><p>装在 <code>~/qa-agent</code>，不要放桌面、文稿或下载：系统隐私保护会让后台任务读不到这些目录。</p></details>
     <details><summary>跨版本升级会有影响吗？</summary><p>可以直接升级到最新版本，不需要逐级安装。升级会替换程序和部署文档，保留 <code>config.json</code>、<code>memory/</code>、<code>drafts/</code>、工作手册和角色职责库；新配置项只在原配置没有时使用默认值。v2.8 起所有回复先写草稿，必须由你确认后才发送；旧版本的自动回复设置升级后会按提醒群提示处理，不会在你不知情时继续自动发消息。升级前建议备份配置和工作手册，升级完成后重启并运行 <code>agent.py check</code>。</p></details>
     <details><summary>表情包为什么不会动？</summary><p>钉钉用 Markdown 图片发出时只显示第一帧，这是钉钉的限制。</p></details>

@@ -51,7 +51,7 @@ if os.path.exists(idf):
     ids = json.load(open(idf, encoding="utf-8"))
     for p in (ids.get("people") or []) if isinstance(ids, dict) else ids:   # identities.json 顶层是 {"people": [...]}；以前直接遍历拿到的是键名，预填一直是空的（v2.7 修）
         if isinstance(p, dict) and p.get("status") == "active" and p.get("roles"):
-            seed.append({"事项": "、".join(ROLE_CN.get(r, r) for r in p["roles"]) + " 相关", "负责人": p["display_name"], "在哪找": "协作群 / 测试群", "依据": "协作库 identities.json"})
+            seed.append({"事项": "、".join(ROLE_CN.get(r, r) for r in p["roles"]) + " 相关", "负责人": p["display_name"], "在哪找": "项目协作群", "依据": "协作库 identities.json"})
 for f in glob.glob(os.path.join(COORD, "features", "*", "feature.yaml")):
     text = open(f, encoding="utf-8", errors="ignore").read()
     title = re.search(r"^title:\s*['\"]?(.+?)['\"]?\s*$", text, re.M)

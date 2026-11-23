@@ -53,9 +53,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--preview", action="store_true", help="只生成 ~/qa-agent-site-preview，不改正式文档和 8090")
     parser.add_argument("--docs-only", action="store_true", help="只更新仓库 docs，不部署站点、根目录文档或共享盘")
+    parser.add_argument("--approved", default="", help="正式上线必填：梦无矶在调试群批准上线的那条消息 ID（scripts/guard.py 核对）")
     args = parser.parse_args()
     if args.preview and args.docs_only:
         parser.error("--preview 与 --docs-only 不能同时使用")
+    guard = os.path.join(os.path.dirname(HERE), "scripts", "guard.py")
+    if not args.preview and not args.docs_only and os.path.exists(guard):   # 正式更新内网 / 共享盘必须有本人批准（11-23）
+        if not args.approved or subprocess.run([sys.executable, "-I", guard, "正式更新内网和共享盘", args.approved]).returncode:
+            parser.error("正式上线要先在调试群拿到梦无矶批准，并用 --approved <消息ID> 运行；只想看效果用 --preview")
     src = source_files(preview=args.preview)
     ver = re.search(r'VERSION = "([^"]+)"', src["agent.py"]).group(1)
     if args.preview:
