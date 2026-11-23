@@ -2,7 +2,7 @@
 
 > **直接开始**：把本文件拖给自己的 AI 助手，发「开始」。AI 会按步骤完成配置；如果希望一键安装或方便升级，再从指南页下载对应系统的安装包。
 >
-> 作者：梦无矶　版本：v3.2.2 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
+> 作者：梦无矶　版本：v3.2.3 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
 >
 > **已经装过**：把本文件拖给 AI 助手发「开始」即可继续使用；想用安装包升级时再运行对应系统的安装脚本，之后提醒群回「升级」即可。跨版本可直接装最新版，配置、记忆、草稿、工作手册、角色职责库、留痕和日志都保留。新规则与个人设置冲突时，AI 必须逐条请本人决定。
 
@@ -417,7 +417,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.2.2 2026-11-23"
+VERSION = "v3.2.3 2026-11-23"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -1575,6 +1575,10 @@ def verification_requested(question):
 
 def ask_ai(no, question):
     """「#编号 问：……」：带着原消息、草稿、依据、记忆去问 AI；AI 可以给答复，也可以按要求改草稿。只回提醒群，不往原会话发任何东西。"""
+    raw = str((getattr(JOB_CONTEXT, "event", None) or {}).get("content") or "")
+    if handled_elsewhere(raw) and not re.search(r"#[A-Za-z0-9]{3,8}\s*(?:问|请问|问一下)[：:]", raw):
+        # 另有值守：本人只是引用卡片说话（没写「#编号 问：」），由值守回答，助手不再重复作答（11-23 #yf2Dw 回了两遍）
+        status_event("交给其他值守，不作答", f"{no}：{question}"); return
     x = _open_load().get(no)
     f, d = draft_by_no(no)
     if not x and not d:
@@ -1649,12 +1653,16 @@ def ask_ai(no, question):
     status_event("核查已回答" if verify else "追问已回答", f"{no}：{ans}" + ("；草稿已更新，待本人确认" if nd else ""), event=ev)
 
 
+def handled_elsewhere(text):
+    skip = CFG.get("handled_elsewhere")
+    return bool(skip and re.search(skip, str(text or "")))
+
+
 def answer_user(e, question):
     """本人在提醒群的普通对话：结合近期问答和实际记录回答，不要求固定口令。"""
     JOB_CONTEXT.event = e
     # 本人另有值守程序时（配置 handled_elsewhere），发给值守的批准 / 指令只记录不作答，免得只读的 AI 回出和实际执行相反的结论（3.2）
-    skip = CFG.get("handled_elsewhere")
-    if skip and re.search(skip, question):
+    if handled_elsewhere(question):
         status_event("交给其他值守，不作答", question, event=e)
         return
     path = os.path.join(HOME, "logs", "user-dialogue.jsonl")
@@ -2028,6 +2036,8 @@ def enqueue_owner_command(e):
             current = OWNER_COMMANDS.get(e.get("message_id"), {})
             if current.get("stage") not in ("queued", "running"):
                 return
+        if handled_elsewhere(e.get("content")):   # 交给其他值守的话不发「已收到」，免得一句话出两条回执（11-23）
+            return
         notify("💬 已收到你的消息", event_context(e) + "\n你的问题：" + str(e.get("content") or "")[:160]
                + "\n当前状态：已排队，处理结果会在这里回复。")
     threading.Thread(target=receipt, daemon=True).start()
