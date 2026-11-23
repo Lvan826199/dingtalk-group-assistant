@@ -2,7 +2,7 @@
 
 > **直接开始**：把本文件拖给自己的 AI 助手，发「开始」。AI 会按步骤完成配置；如果希望一键安装或方便升级，再从指南页下载对应系统的安装包。
 >
-> 作者：梦无矶　版本：v3.2.1 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
+> 作者：梦无矶　版本：v3.2.2 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
 >
 > **已经装过**：把本文件拖给 AI 助手发「开始」即可继续使用；想用安装包升级时再运行对应系统的安装脚本，之后提醒群回「升级」即可。跨版本可直接装最新版，配置、记忆、草稿、工作手册、角色职责库、留痕和日志都保留。新规则与个人设置冲突时，AI 必须逐条请本人决定。
 
@@ -417,7 +417,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.2.1 2026-11-23"
+VERSION = "v3.2.2 2026-11-23"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -528,7 +528,7 @@ def ai_exec(prompt, timeout=300, images=None, verify=False):
     if text.strip():
         return text
     if CFG.get("ai_fallback") is False:
-        runtime_alert("ai-empty", "⚠️ AI 判断没有结果", event_context(getattr(JOB_CONTEXT, "event", {})) + "\n主引擎：" + name + "\n没有有效输出；已保留事项等待处理。")
+        runtime_alert("ai-empty", "⚠️ AI 判断没有结果", event_context(getattr(JOB_CONTEXT, "event", {})) + "\n主引擎：" + name + f"\n错误：{STATE.get('ai_last_error') or '没有输出'}\n已保留事项等待处理。")
         return text
     for k in AI_PRESETS:
         remaining = int(deadline - time.monotonic())
@@ -545,7 +545,7 @@ def ai_exec(prompt, timeout=300, images=None, verify=False):
                 notify("🔁 判断用的 AI 换成了备用", f"{name} 没给出结果（没装好、报错或卡住），这次改用 {n2}。经常这样的话，检查一下 {name} 在终端里能不能用。今天不再重复提醒。")
             return text
     if not text.strip():
-        runtime_alert("ai-empty", "⚠️ AI 判断超时或失败", f"时间：{dt.datetime.now():%Y-%m-%d %H:%M:%S}\n任务：消息判断\n主引擎：{name}\n已尝试备用引擎：是\n处理已暂停，事项会保留在操作台等待人工判断。")
+        runtime_alert("ai-empty", "⚠️ AI 判断超时或失败", event_context(getattr(JOB_CONTEXT, "event", {})) + f"\n主引擎：{name}\n已尝试备用引擎：是\n最后的错误：{STATE.get('ai_last_error') or '没有输出'}\n事项会保留在操作台等待人工判断；请在本机检查 AI 登录、网络或额度。")
     return text
 
 
@@ -571,9 +571,11 @@ def _ai_once(name, args, how, prompt, timeout, images=None):
     if os.path.exists(out):
         os.remove(out)                                                     # 以前固定文件名：这次失败会读到上次的结果
     if r.returncode != 0:
-        detail = report_text(r.stderr or "未返回有效结果", 200)
+        err = (r.stderr or "").strip()
+        detail = report_text(err[-300:] if err else "未返回有效结果", 300)   # 取末尾：开头只是版本 / 配置横幅，真正的错误在最后
         log(name, "执行失败", detail)
-        runtime_alert("ai-exec-" + name, "⚠️ AI 判断超时" if r.returncode == 124 else "⚠️ AI 判断执行失败", event_context(getattr(JOB_CONTEXT, "event", {})) + f"\n引擎：{name}\n超时上限：{timeout} 秒\n错误：{detail}\n事项仍保留；请在本机检查 AI 登录、网络或额度，助手不会标成已完成。")
+        # 不在这里提醒：备用引擎接上就不算失败；全部引擎都没结果时由 ai_exec 统一提醒一次（11-23 梦无矶：备用成功了还报失败）
+        STATE["ai_last_error"] = f"{name}：" + ("超时" if r.returncode == 124 else detail)
     return text
 import ssl
 SSLCTX = ssl.create_default_context(cafile="/etc/ssl/cert.pem") if os.path.exists("/etc/ssl/cert.pem") and os.name != "nt" else ssl.create_default_context()
@@ -1219,6 +1221,13 @@ def open_add(e, kind, why):
     return no
 
 
+def console_closed_records():
+    try:
+        return [json.loads(l) for l in open(os.path.join(HOME, "logs", "closed.jsonl"), encoding="utf-8").read().splitlines()[-300:] if l.strip()]
+    except (OSError, ValueError):
+        return []
+
+
 def open_close(no, why, reply_event=None):
     """幂等关闭事项；旧版调用只传两个参数也必须继续可用。"""
     d = _open_load()
@@ -1832,6 +1841,9 @@ def command(e):
     for no in nos:
         f, d = draft_by_no(no)
         if not f:
+            done = next((x for x in reversed(console_closed_records()) if x.get("no") == no), None)
+            if done:   # 已在操作台 / 原会话处理过：只记日志，不再发「没找到」打扰本人（11-23 #uf5cw）
+                log("指令对应的事项已处理过，不重复提示", no, done.get("why", "")); continue
             notify(f"❓ 没找到草稿 {no}", "可能已经发过或删了；看还有哪些：在提醒群发「草稿」两个字。"); continue
         m = re.search(r"改成[：:]\s*(.+)", text, re.S)
         if m:
