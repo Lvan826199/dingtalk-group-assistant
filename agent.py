@@ -1235,6 +1235,11 @@ def ask_ai(no, question):
 def answer_user(e, question):
     """本人在提醒群的普通对话：结合近期问答和实际记录回答，不要求固定口令。"""
     JOB_CONTEXT.event = e
+    # 本人另有值守程序时（配置 handled_elsewhere），发给值守的批准 / 指令只记录不作答，免得只读的 AI 回出和实际执行相反的结论（3.2）
+    skip = CFG.get("handled_elsewhere")
+    if skip and re.search(skip, question):
+        status_event("交给其他值守，不作答", question, event=e)
+        return
     path = os.path.join(HOME, "logs", "user-dialogue.jsonl")
     history = []
     try:

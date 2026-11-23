@@ -261,3 +261,12 @@ def test_late_ai_draft_skipped_when_owner_already_replied(make_agent):
     a.decide = lambda batch: {"action": "reply", "mine": True, "text": "我来整理", "reason": "x"}
     assert "不再生成草稿" in a.handle([e])
     assert not any(x.get("event", {}).get("message_id") == "msgLATE00001" for x in a._open_load().values())
+
+
+def test_handled_elsewhere_skips_ai_answer(make_agent, monkeypatch):
+    a, console, notes, calls, *_ = _boot(make_agent)
+    a.CFG["handled_elsewhere"] = r"^(批准|同意)"
+    asked = []
+    monkeypatch.setattr(a, "ai_exec", lambda *x, **k: asked.append(x) or '{"answer":"未执行"}')
+    a.answer_user({"sender": "本人", "content": "批准发布3.2", "conversation_id": "cidN", "message_id": "msgAPPROVE1"}, "批准发布3.2")
+    assert asked == [] and not any("AI 的回答" in t or "未执行" in x for t, x in notes)
