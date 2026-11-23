@@ -36,7 +36,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.1.3 2026-11-23"
+VERSION = "v3.1.4 2026-11-23"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -943,7 +943,7 @@ def commitment_start(no, draft, confirmation_event):
                 "confirmed_by": CFG.get("my_name"), "confirmation_message_id": confirmation_event.get("message_id")})
     kind = execution_kind(draft)
     if kind and not declined:
-        rec.update(execution_kind=kind, event=ev, queued_at=time.time())
+        rec.update(execution_kind=kind, event=ev, queued_at=time.time(), execution_backend=(previous or {}).get("execution_backend") or ("local" if CFG.get("execution_jobs") else "external"))
         # 已在执行的事项被再次确认，不重复启动一个测试进程。
         if previous and previous_status in ("starting", "running"):
             rec["status"] = previous_status
@@ -1009,8 +1009,9 @@ def enqueue_owner_execution(event, text):
     no = open_add(event, "execution", "本人已明确要求执行")
     rec = commitment_start(no, "我会执行：" + text, {**event, "execution_direct": True})
     if rec:
+        route = "已进入本机测试队列，尚未运行" if rec.get("execution_backend") == "local" else "已记录，等待当前值守助手的实际执行回执"
         notify("▶ 执行任务已登记", event_context(event, no) + "\n任务：" + text +
-               "\n当前状态：已进入执行队列，尚未运行；实际开始、日志和结果将另行回报。")
+               "\n当前状态：" + route + "；运行、日志和结果分别记录。")
     return rec
 
 
@@ -1032,7 +1033,7 @@ def execution_notice(key, stage, detail):
 def recover_executions():
     # 进程退出时外部测试可能仍在运行，不自动重跑未知结果的任务。
     for rec in execution_snapshot():
-        if rec.get("status") in ("starting", "running"):
+        if rec.get("execution_backend") != "external" and rec.get("status") in ("starting", "running"):
             commitment_update(rec["task_key"], "执行中断", "服务重启，先核对既有运行编号与日志，禁止自动重跑。", status="interrupted")
             execution_notice(rec["task_key"], "⚠️ 执行中断待核实", "已有运行结果未知，原日志保留；需要核对后再决定是否重试。")
 
@@ -1041,7 +1042,7 @@ def run_execution(key):
     """只运行本机预先配置的测试入口；不执行消息中的命令，不用回复文本充当测试结果。"""
     with EXECUTION_LOCK:
         rec = _commit_load().get(key) or {}
-        if rec.get("status") != "committed" or not rec.get("execution_kind"):
+        if rec.get("status") != "committed" or not rec.get("execution_kind") or rec.get("execution_backend") == "external":
             return False
         job = (CFG.get("execution_jobs") or {}).get(rec["execution_kind"]) or {}
         cmd = job.get("command")
@@ -1127,13 +1128,49 @@ def run_execution(key):
         return True
 
 
+def external_execution_progress(value):
+    """已有值守助手回传真实进度；只登记，不另起执行进程、不发送原群。"""
+    if not isinstance(value, dict):
+        raise ValueError("执行回执格式无效")
+    key, state = value.get("task_key"), value.get("status")
+    rec = _commit_load().get(key) or {}
+    if not rec.get("execution_kind") or rec.get("execution_backend") != "external":
+        raise ValueError("未找到交由外部值守的执行任务")
+    if state not in ("running", "completed", "waiting_dependency", "waiting_resources", "failed", "interrupted"):
+        raise ValueError("执行状态无效")
+    detail = value.get("detail")
+    if not isinstance(detail, str) or not detail.strip():
+        raise ValueError("请提供实际进展或阻塞说明")
+    run = dict(rec.get("execution_run") or {})
+    if state in ("running", "completed"):
+        run_id, log_path = value.get("run_id"), value.get("log")
+        if not run_id or not isinstance(log_path, str) or not os.path.isfile(log_path):
+            raise ValueError("实际运行需提供运行编号与已存在的日志")
+        run.update(id=str(run_id), log=log_path, environment=value.get("environment"))
+    evidence = value.get("evidence") or []
+    if not isinstance(evidence, list) or not all(isinstance(p, str) and os.path.isfile(p) for p in evidence):
+        raise ValueError("执行证据不存在或格式无效")
+    if state == "completed":
+        total, passed = value.get("total"), value.get("passed")
+        if (type(total) is not int or type(passed) is not int or total <= 0 or passed != total
+                or type(value.get("exit_code")) is not int or value.get("exit_code") != 0 or not evidence or value.get("environment") != "test"
+                or not value.get("version_start") or value.get("version_start") != value.get("version_end")):
+            raise ValueError("不能确认通过：数量、退出码、同版本或报告不完整")
+        run.update(total=total, passed=passed, exit_code=0, version_start=value["version_start"], version_end=value["version_end"])
+    _execution_patch(key, execution_run=run, last_progress=time.time())
+    commitment_update(key, "值守执行回执", detail, evidence=evidence, status=state)
+    status_event("值守执行回执", detail, event=rec.get("event"))
+    return _commit_load()[key]
+
+
 def check_executions(now=None):
     now = now or time.time()
     for rec in execution_snapshot():
         state = rec.get("status")
         age = now - rec.get("queued_at", now)
-        overdue = (state == "committed" and age >= 120) or (state in ("waiting_resources", "waiting_dependency", "failed", "interrupted") and age >= 7200)
-        interval = 600 if state == "committed" else 7200
+        stalled_external = rec.get("execution_backend") == "external" and state == "running" and now - rec.get("last_progress", now) >= 600
+        overdue = stalled_external or (state == "committed" and age >= 120) or (state in ("waiting_resources", "waiting_dependency", "failed", "interrupted") and age >= 7200)
+        interval = 600 if state in ("committed", "running") else 7200
         if overdue and now - rec.get("last_notice", 0) >= interval:
             execution_notice(rec["task_key"], "⚠️ 执行任务仍未完成", "状态：" + state + "\n" + str(rec.get("next_action") or "请核对原运行与前置，不能把消息已回复视为测试完成。"))
 
@@ -1141,7 +1178,7 @@ def check_executions(now=None):
 def execution_worker():
     while SERVICE_RUNNING and not UPDATE_EXIT.is_set():
         for rec in execution_snapshot():
-            if rec.get("status") == "committed":
+            if rec.get("status") == "committed" and rec.get("execution_backend") == "local":
                 try:
                     run_execution(rec["task_key"])
                 except Exception as ex:
@@ -3055,7 +3092,7 @@ def main():
             for w in workers:
                 w.join(timeout=1)
             # 已开始的判断完成后再退出；未开始的批次落盘，重启后继续。
-            while BUSY["n"] or OWNER_ACTIVE["message_id"] or any(x.get("status") in ("starting", "running") for x in execution_snapshot()):
+            while BUSY["n"] or OWNER_ACTIVE["message_id"] or any(x.get("execution_backend") == "local" and x.get("status") in ("starting", "running") for x in execution_snapshot()):
                 time.sleep(1)
             _stop_children()
             pending = []

@@ -2,7 +2,7 @@
 
 > **直接开始**：把本文件拖给自己的 AI 助手，发「开始」。AI 会按步骤完成配置；如果希望一键安装或方便升级，再从指南页下载对应系统的安装包。
 >
-> 作者：梦无矶　版本：v3.1.3 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
+> 作者：梦无矶　版本：v3.1.4 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
 >
 > **已经装过**：把本文件拖给 AI 助手发「开始」即可继续使用；想用安装包升级时再运行对应系统的安装脚本，之后提醒群回「升级」即可。跨版本可直接装最新版，配置、记忆、草稿、工作手册、角色职责库、留痕和日志都保留。新规则与个人设置冲突时，AI 必须逐条请本人决定。
 
@@ -419,7 +419,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.1.3 2026-11-23"
+VERSION = "v3.1.4 2026-11-23"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -1326,7 +1326,7 @@ def commitment_start(no, draft, confirmation_event):
                 "confirmed_by": CFG.get("my_name"), "confirmation_message_id": confirmation_event.get("message_id")})
     kind = execution_kind(draft)
     if kind and not declined:
-        rec.update(execution_kind=kind, event=ev, queued_at=time.time())
+        rec.update(execution_kind=kind, event=ev, queued_at=time.time(), execution_backend=(previous or {}).get("execution_backend") or ("local" if CFG.get("execution_jobs") else "external"))
         # 已在执行的事项被再次确认，不重复启动一个测试进程。
         if previous and previous_status in ("starting", "running"):
             rec["status"] = previous_status
@@ -1392,8 +1392,9 @@ def enqueue_owner_execution(event, text):
     no = open_add(event, "execution", "本人已明确要求执行")
     rec = commitment_start(no, "我会执行：" + text, {**event, "execution_direct": True})
     if rec:
+        route = "已进入本机测试队列，尚未运行" if rec.get("execution_backend") == "local" else "已记录，等待当前值守助手的实际执行回执"
         notify("▶ 执行任务已登记", event_context(event, no) + "\n任务：" + text +
-               "\n当前状态：已进入执行队列，尚未运行；实际开始、日志和结果将另行回报。")
+               "\n当前状态：" + route + "；运行、日志和结果分别记录。")
     return rec
 
 
@@ -1415,7 +1416,7 @@ def execution_notice(key, stage, detail):
 def recover_executions():
     # 进程退出时外部测试可能仍在运行，不自动重跑未知结果的任务。
     for rec in execution_snapshot():
-        if rec.get("status") in ("starting", "running"):
+        if rec.get("execution_backend") != "external" and rec.get("status") in ("starting", "running"):
             commitment_update(rec["task_key"], "执行中断", "服务重启，先核对既有运行编号与日志，禁止自动重跑。", status="interrupted")
             execution_notice(rec["task_key"], "⚠️ 执行中断待核实", "已有运行结果未知，原日志保留；需要核对后再决定是否重试。")
 
@@ -1424,7 +1425,7 @@ def run_execution(key):
     """只运行本机预先配置的测试入口；不执行消息中的命令，不用回复文本充当测试结果。"""
     with EXECUTION_LOCK:
         rec = _commit_load().get(key) or {}
-        if rec.get("status") != "committed" or not rec.get("execution_kind"):
+        if rec.get("status") != "committed" or not rec.get("execution_kind") or rec.get("execution_backend") == "external":
             return False
         job = (CFG.get("execution_jobs") or {}).get(rec["execution_kind"]) or {}
         cmd = job.get("command")
@@ -1510,13 +1511,49 @@ def run_execution(key):
         return True
 
 
+def external_execution_progress(value):
+    """已有值守助手回传真实进度；只登记，不另起执行进程、不发送原群。"""
+    if not isinstance(value, dict):
+        raise ValueError("执行回执格式无效")
+    key, state = value.get("task_key"), value.get("status")
+    rec = _commit_load().get(key) or {}
+    if not rec.get("execution_kind") or rec.get("execution_backend") != "external":
+        raise ValueError("未找到交由外部值守的执行任务")
+    if state not in ("running", "completed", "waiting_dependency", "waiting_resources", "failed", "interrupted"):
+        raise ValueError("执行状态无效")
+    detail = value.get("detail")
+    if not isinstance(detail, str) or not detail.strip():
+        raise ValueError("请提供实际进展或阻塞说明")
+    run = dict(rec.get("execution_run") or {})
+    if state in ("running", "completed"):
+        run_id, log_path = value.get("run_id"), value.get("log")
+        if not run_id or not isinstance(log_path, str) or not os.path.isfile(log_path):
+            raise ValueError("实际运行需提供运行编号与已存在的日志")
+        run.update(id=str(run_id), log=log_path, environment=value.get("environment"))
+    evidence = value.get("evidence") or []
+    if not isinstance(evidence, list) or not all(isinstance(p, str) and os.path.isfile(p) for p in evidence):
+        raise ValueError("执行证据不存在或格式无效")
+    if state == "completed":
+        total, passed = value.get("total"), value.get("passed")
+        if (type(total) is not int or type(passed) is not int or total <= 0 or passed != total
+                or type(value.get("exit_code")) is not int or value.get("exit_code") != 0 or not evidence or value.get("environment") != "test"
+                or not value.get("version_start") or value.get("version_start") != value.get("version_end")):
+            raise ValueError("不能确认通过：数量、退出码、同版本或报告不完整")
+        run.update(total=total, passed=passed, exit_code=0, version_start=value["version_start"], version_end=value["version_end"])
+    _execution_patch(key, execution_run=run, last_progress=time.time())
+    commitment_update(key, "值守执行回执", detail, evidence=evidence, status=state)
+    status_event("值守执行回执", detail, event=rec.get("event"))
+    return _commit_load()[key]
+
+
 def check_executions(now=None):
     now = now or time.time()
     for rec in execution_snapshot():
         state = rec.get("status")
         age = now - rec.get("queued_at", now)
-        overdue = (state == "committed" and age >= 120) or (state in ("waiting_resources", "waiting_dependency", "failed", "interrupted") and age >= 7200)
-        interval = 600 if state == "committed" else 7200
+        stalled_external = rec.get("execution_backend") == "external" and state == "running" and now - rec.get("last_progress", now) >= 600
+        overdue = stalled_external or (state == "committed" and age >= 120) or (state in ("waiting_resources", "waiting_dependency", "failed", "interrupted") and age >= 7200)
+        interval = 600 if state in ("committed", "running") else 7200
         if overdue and now - rec.get("last_notice", 0) >= interval:
             execution_notice(rec["task_key"], "⚠️ 执行任务仍未完成", "状态：" + state + "\n" + str(rec.get("next_action") or "请核对原运行与前置，不能把消息已回复视为测试完成。"))
 
@@ -1524,7 +1561,7 @@ def check_executions(now=None):
 def execution_worker():
     while SERVICE_RUNNING and not UPDATE_EXIT.is_set():
         for rec in execution_snapshot():
-            if rec.get("status") == "committed":
+            if rec.get("status") == "committed" and rec.get("execution_backend") == "local":
                 try:
                     run_execution(rec["task_key"])
                 except Exception as ex:
@@ -3438,7 +3475,7 @@ def main():
             for w in workers:
                 w.join(timeout=1)
             # 已开始的判断完成后再退出；未开始的批次落盘，重启后继续。
-            while BUSY["n"] or OWNER_ACTIVE["message_id"] or any(x.get("status") in ("starting", "running") for x in execution_snapshot()):
+            while BUSY["n"] or OWNER_ACTIVE["message_id"] or any(x.get("execution_backend") == "local" and x.get("status") in ("starting", "running") for x in execution_snapshot()):
                 time.sleep(1)
             _stop_children()
             pending = []
@@ -4627,6 +4664,14 @@ class H(BaseHTTPRequestHandler):
         except ValueError:
             return self._send(400, '{"msg": "格式不对"}')
         path = urllib.parse.urlparse(self.path).path
+        if path == "/api/execution":
+            if not self._local():
+                return self._send(403, '{"msg":"只允许本机桥接调用"}')
+            try:
+                rec = A["external_execution_progress"](body)
+            except (ValueError, TypeError) as ex:
+                return self._send(400, json.dumps({"msg": str(ex)}, ensure_ascii=False))
+            return self._send(200, json.dumps({"ok": True, "status": rec["status"]}))
         if path == "/api/notifications":
             if not self._local():
                 return self._send(403, '{"msg":"只允许本机桥接调用"}')
@@ -4849,7 +4894,7 @@ function readable(text){return esc(text).split(/\n\s*\n/).map(p=>'<p>'+p.replace
 function execLabel(status){return {committed:'待执行',starting:'正在启动',interrupted:'执行中断待核实',running:'执行中',waiting_resources:'等待前置',waiting_dependency:'等待配合',completed:'已完成',done:'已完成',failed:'执行异常',declined:'已拒接'}[status]||status||''}
 function renderOwners(){const o=S.owner||{queued:0,running:0,needs_attention:0,recent:[]},count=$('ownerCount');count.textContent=o.running+' 处理中 · '+o.queued+' 排队'+(o.needs_attention?' · '+o.needs_attention+' 需关注':'');count.className='tag '+(o.needs_attention?'t-red':o.running||o.queued?'t-wait':'t-gray');const labels={queued:'排队中',running:'处理中',replied:'已回复',handled:'指令已处理',failed:'处理失败',interrupted:'处理中断'};const html=o.recent.map(x=>`<div class="owner-item"><span class="tag ${['failed','interrupted'].includes(x.stage)?'t-red':x.stage==='replied'?'t-ok':x.stage==='queued'||x.stage==='running'?'t-wait':'t-gray'}">${esc(labels[x.stage]||x.stage)}</span> <span class="when">${esc(x.message_time||'')}${['queued','running'].includes(x.stage)?' · 已等待 '+Math.floor(x.age_seconds/60)+' 分钟':''}</span><div class="owner-question">${esc(x.question)}</div>${x.error?`<div class="tag t-red">${esc(x.error)}</div>`:''}${x.answer?`<details><summary class="card-hint">查看答复</summary><div class="owner-answer readable">${readable(x.answer)}</div></details>`:''}</div>`).join('')||'<div class="loading-note">暂时没有调试群提问记录；新问题会显示接收和回复状态。</div>';if($('ownerList').dataset.content!==html){const expanded=new Set([...$('ownerList').querySelectorAll('.owner-item')].flatMap((el,i)=>el.querySelector('details[open]')?[i]:[]));$('ownerList').innerHTML=html;$('ownerList').dataset.content=html;[...$('ownerList').querySelectorAll('.owner-item')].forEach((el,i)=>{if(expanded.has(i)&&el.querySelector('details'))el.querySelector('details').open=true})}}
 function renderNotifications(){const rows=S.notifications||[];$('notificationCount').textContent='最近 '+rows.length+' 条';const html=rows.map(x=>`<div class="owner-item" data-id="${esc(x.notification_id)}"><span class="tag ${x.delivered?'t-ok':'t-red'}">${x.delivered?'机器人已送达':'机器人未送达'}</span> <span class="when">${esc((x.time||'').replace('T',' '))}</span><div class="owner-question">${esc(x.title)}</div>${x.group?`<div class="where">${esc(x.group)}</div>`:''}<details><summary class="card-hint">查看完整通知</summary><div class="owner-answer readable">${readable(x.display_text||x.text)}</div></details></div>`).join('')||'<div class="loading-note">暂无机器人通知记录。</div>';const el=$('notificationList');if(el.dataset.content!==html){const expanded=new Set([...el.querySelectorAll('.owner-item')].filter(x=>x.querySelector('details[open]')).map(x=>x.dataset.id));el.innerHTML=html;el.dataset.content=html;[...el.querySelectorAll('.owner-item')].forEach(x=>{if(expanded.has(x.dataset.id))x.querySelector('details').open=true})}}
-function renderExecutions(){const rows=S.executions||[];$('executionCount').textContent=rows.filter(x=>!['completed','declined'].includes(x.status)).length+' 未完成';const el=$('executionList'),html=rows.map(x=>{const run=x.execution_run||{},last=(x.history||[]).slice(-1)[0]||{};return `<div class="owner-item"><span class="tag ${x.status==='completed'?'t-ok':['failed','interrupted'].includes(x.status)?'t-red':'t-wait'}">${esc(execLabel(x.status))}</span><div class="owner-question">${esc(x.commitment_text)}</div><div class="where">${esc(last.at||x.confirmed_at)} · ${esc(last.detail||x.next_action||'')}</div>${run.id?`<div class="where">运行编号：${esc(run.id)} · ${esc(run.environment)}${run.total!=null?' · '+esc(run.passed)+'/'+esc(run.total):''}</div><div class="where">日志：${esc(run.log)}</div>`:''}<button class="btn sm" onclick="openExecution('${esc(x.task_key)}')">查看进度与日志</button></div>`}).join('')||'<div class="loading-note">暂无已确认的回归或复测任务。</div>';if(el.dataset.content!==html){el.innerHTML=html;el.dataset.content=html}}
+function renderExecutions(){const rows=S.executions||[];$('executionCount').textContent=rows.filter(x=>!['completed','declined'].includes(x.status)).length+' 未完成';const el=$('executionList'),html=rows.map(x=>{const run=x.execution_run||{},last=(x.history||[]).slice(-1)[0]||{};return `<div class="owner-item"><span class="tag ${x.status==='completed'?'t-ok':['failed','interrupted'].includes(x.status)?'t-red':'t-wait'}">${esc(x.execution_backend==='external'&&x.status==='committed'?'待值守执行回执':execLabel(x.status))}</span><div class="owner-question">${esc(x.commitment_text)}</div><div class="where">${esc(last.at||x.confirmed_at)} · ${esc(last.detail||x.next_action||'')}</div>${run.id?`<div class="where">运行编号：${esc(run.id)} · ${esc(run.environment)}${run.total!=null?' · '+esc(run.passed)+'/'+esc(run.total):''}</div><div class="where">日志：${esc(run.log)}</div>`:''}<button class="btn sm" onclick="openExecution('${esc(x.task_key)}')">查看进度与日志</button></div>`}).join('')||'<div class="loading-note">暂无已确认的回归或复测任务。</div>';if(el.dataset.content!==html){el.innerHTML=html;el.dataset.content=html}}
 async function openExecution(key){sel=null;const request=++panelRequest;$('mask').classList.add('on');$('panel').classList.add('on');$('ptitle').textContent='执行任务';$('psub').textContent='实际运行日志与结果';$('pbody').innerHTML=loading('正在读取执行进度…');$('pfoot').innerHTML='';try{const r=await api('/api/execution?key='+encodeURIComponent(key));if(request!==panelRequest)return;const x=r.task;$('pbody').innerHTML=`<div class="note readable"><h4>${esc(execLabel(x.status))}</h4>${readable(x.commitment_text)}${(x.history||[]).map(h=>`<p><b>${esc(h.at)} · ${esc(h.stage)}</b><br>${esc(h.detail)}</p>`).join('')}</div><div class="note"><h4>实际运行输出（末30KB）</h4><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(r.output||'尚无运行输出；任务未执行时不生成虚假日志。')}</pre></div>`}catch(e){if(request===panelRequest)$('pbody').textContent='读取失败：'+e.message}}
 function matches(c){return !taskQuery||[c.no,c.who,c.group,c.text,c.what,c.draft,c.sent,c.reason,c.why].some(x=>String(x||'').toLowerCase().includes(taskQuery.trim().toLowerCase()))}
 function bubbles(rows,source=''){return rows.map(m=>{const anchor=m.anchor||(!m.reply&&m.text&&source&&source.startsWith(String(m.text||'').slice(0,30)));return `<div class="bub${m.reply?' reply':anchor?' anchor':''}" ${anchor?'data-anchor="true"':''}>${av(m.who)}<div class="b">${m.reply||anchor?`<div class="bubble-label">${m.reply?'已发送回复':'被提及的原消息'}</div>`:''}<div class="w">${esc(m.who)}<span>${esc((m.time||'').slice(5,16))}</span></div><div class="tx readable">${readable(m.text)}</div></div></div>`}).join('')}
@@ -5251,7 +5296,7 @@ if __name__=='__main__':
 
 **调试群里机器人已经回复，为什么操作台还没有？**
 
-3.1.3增加独立机器人的通知桥接。操作台“机器人通知”显示完整内容、时间及实际投递结果，“你的消息”显示本人提问的处理状态；业务任务依旧在原编号中，通知送达不等于验收完成。独立发送脚本在获得真实发送结果后调用同目录 `console.py` 的 `mirror_notification({"title": "通知标题", "text": "完整正文", "delivered": True, "notification_id": "稳定唯一编号", "source": "external"})`。失败时 `delivered` 必须为 `False`；只同步记录，不重发钉钉。操作台离线时自动排队补记。
+3.1.4增加独立机器人的通知桥接。操作台“机器人通知”显示完整内容、时间及实际投递结果，“你的消息”显示本人提问的处理状态；业务任务依旧在原编号中，通知送达不等于验收完成。独立发送脚本在获得真实发送结果后调用同目录 `console.py` 的 `mirror_notification({"title": "通知标题", "text": "完整正文", "delivered": True, "notification_id": "稳定唯一编号", "source": "external"})`。失败时 `delivered` 必须为 `False`；只同步记录，不重发钉钉。操作台离线时自动排队补记。
 
 个人配置、授权、记忆、草稿、通知与审计只留本机；发布只打包固定程序和首次使用的通用手册模板。不要把正在使用的个人工作手册复制进安装包，也不要覆盖使用者已有规则。
 
@@ -5259,6 +5304,8 @@ if __name__=='__main__':
 
 本人明确要求执行，或确认包含执行承诺的草稿后，操作台“执行任务”会持久保存任务。实际启动测试进程后才显示运行编号和日志；每2分钟同步进度，最终显示通过、待排查或阻塞。可点“查看进度与日志”读取原始输出。问“复测了吗”或说“先不要复测”不会触发新一轮；任务中断先核原运行，不自动重跑。
 
-首次接入时，部署助手按本人已确认的范围在本机配置 `execution_jobs` 的 `regression` / `retest`，每项包含固定的 `command` 数组、`cwd`、`environment: "test"`，可选 `timeout` 秒数。这些是个人属性，不写入公开默认值。入口未配置或目标涉及生产时明确“未执行”，同时显示缺项并机器人提醒，不能拿计划回复充作测试结果。
+默认沿用现有值守助手执行，消息助手只记录任务、日志和实际回执，不启动新的值守。外部值守通过带本机授权的 `POST /api/execution` 回传 `task_key`、`status`、`detail`；运行中提供 `run_id` 与存在的 `log` 路径，通过时另附下述数量、同版本与报告字段。接口只登记、不执行或向原群发消息。重启网页助手不改变外部任务状态。
+
+只有本人明确选择内置执行器时，部署助手才按已确认的范围在本机配置 `execution_jobs` 的 `regression` / `retest`，每项包含固定的 `command` 数组、`cwd`、`environment: "test"`，可选 `timeout` 秒数。这些是个人属性，不写入公开默认值。入口未配置或目标涉及生产时明确“未执行”，同时显示缺项并机器人提醒，不能拿计划回复充作测试结果。
 
 适配器从 `QA_EXECUTION_TASK` 指向的 JSON 文件读取本次请求（含原消息、任务键、环境与运行编号），把结果写入 `QA_EXECUTION_RESULT` 指向的 JSON 文件：`{"status":"passed|failed|blocked","environment":"test","version_start":"本轮head","version_end":"本轮head","summary":"实际结果摘要","total":2,"passed":2,"evidence":["本次真实报告路径"]}`。只有退出0、实际数量全部通过、测试服版本始终一致且报告存在才能记为通过；失败先排平台、脚本、数据与合同，不直接认定接口缺陷。群汇报仍按已有授权与审核出口执行。未启动超过2分钟主动提醒，阻塞每2小时再提醒；没有新消息也会检查执行队列。

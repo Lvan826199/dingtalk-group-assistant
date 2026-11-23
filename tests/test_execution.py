@@ -64,6 +64,7 @@ def test_exit_zero_without_report_and_nonzero_with_pass_report_never_pass(make_a
 
 def test_missing_entry_point_is_visible_blocker(make_agent):
     a, notes, calls=make_agent()
+    a.CFG['execution_jobs']={'retest':{'command':[]}}
     rec=a.enqueue_owner_execution(request(),request()['content'])
     assert not a.run_execution(rec['task_key'])
     assert a.execution_snapshot()[0]['status']=='waiting_resources'
@@ -81,6 +82,7 @@ def test_confirmed_draft_without_issue_number_enters_execution(make_agent):
 
 def test_recovery_exposes_interruption_without_replaying(make_agent):
     a,notes,_=make_agent()
+    a.CFG['execution_jobs']={'regression':{'command':['fixture']}}
     rec=a.enqueue_owner_execution(request(),request()['content'])
     a._execution_patch(rec['task_key'],status='running')
     a.recover_executions()
@@ -117,3 +119,21 @@ def test_changed_version_is_never_counted_as_passed(make_agent,tmp_path):
     a.run_execution(rec['task_key'])
     assert a.execution_snapshot()[0]['status']=='failed'
     assert not any('已通过' in t for t,_ in notes)
+
+
+def test_external_duty_keeps_ownership_and_reports_actual_results(make_agent,tmp_path):
+    a,notes,calls=make_agent()
+    rec=a.enqueue_owner_execution(request(),request()['content'])
+    assert rec['execution_backend']=='external'
+    assert not a.run_execution(rec['task_key'])
+    log=tmp_path/'external.log';log.write_text('external test execution',encoding='utf-8')
+    proof=tmp_path/'external-report.json';proof.write_text('{"total":2,"passed":2}',encoding='utf-8')
+    progress={'task_key':rec['task_key'],'status':'running','detail':'值守已开始本轮复测','run_id':'external-123','log':str(log),'environment':'test'}
+    a.external_execution_progress(progress)
+    a.recover_executions() # 重启网页助手不改变外部值守的运行状态。
+    assert a.execution_snapshot()[0]['status']=='running'
+    import pytest
+    with pytest.raises(ValueError):
+        a.external_execution_progress({**progress,'status':'completed'})
+    result=a.external_execution_progress({**progress,'status':'completed','detail':'2/2通过','total':2,'passed':2,'exit_code':0,'evidence':[str(proof)],'version_start':'same-head','version_end':'same-head'})
+    assert result['status']=='completed' and not calls
