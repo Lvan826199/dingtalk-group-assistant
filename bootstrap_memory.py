@@ -3,6 +3,8 @@
 import datetime as dt, glob, json, os, re, shutil, subprocess, sys
 
 HOME = os.path.dirname(os.path.abspath(__file__))
+if HOME not in sys.path:
+    sys.path.insert(0, HOME)
 CFG = json.load(open(os.path.join(os.path.expanduser("~"), ".qa-agent", "config.json"), encoding="utf-8"))
 # ---- 开机自启（LaunchAgent / systemd / 计划任务）带的 PATH 很短，找不到装在用户目录下的 AI 命令和钉钉 CLI
 # （macOS 上 claude / codex 默认在 ~/.local/bin，launchd 的 PATH 里没有，11-18 实测）。把常见安装目录补到 PATH 末尾，已有的不重复加。
@@ -27,7 +29,8 @@ AI_PRESETS = {"codex": (["codex", "exec", "--skip-git-repo-check", "--sandbox", 
               "codebuddy": (["codebuddy", "-p", "--output-format", "text"], "stdin"),
               "qoder": (["qodercli", "-p", "-o", "text"], "stdin"),
               "dsh": (["dsh", "--profile", "headless", "-"], "stdin")}
-COORD = os.path.join(HOME, "project-coordination")
+from package_runtime import coordination_root
+COORD = coordination_root(HOME, CFG)
 DAYS = int(sys.argv[1]) if len(sys.argv) > 1 else 30
 EXP = os.path.join(HOME, "history"); MEM = os.path.join(HOME, "memory")
 for d in (EXP, MEM, os.path.join(HOME, "logs")):

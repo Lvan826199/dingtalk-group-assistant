@@ -1,10 +1,12 @@
 """把文档做成内网网页（只提供最新版本下载，旧版升级说明不放，用户 11-18 定）：生成到 ~/qa-agent-site（不放桌面：launchd 后台读不了桌面目录），由 launchd 起 http.server 8090 常驻、开机登录自启。
 页面：首页列出文档（在线看 / 下载）+ 版本和更新记录；文档在浏览器里用本地 marked.js 渲染（不依赖外网）。
 用法：python3 -I site/build_site.py   （build_docs.py 生成文档后会自动调用）"""
-import html, json, os, re, shutil
+import html, json, os, re, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.dirname(HERE)
-OUT = os.path.expanduser(os.environ.get("SITE_DIR", "~/group-assistant-site"))   # 网页输出目录（macOS 不要放桌面 / 文稿）
-DOCS = [("分享-可直接部署并运行AI监控钉钉群并自动处理.md", "部署文档（新同事从这里开始）", "拖进 Codex 发「部署」；已装过的发「升级到 最新版」"),
+OUT = os.path.expanduser(os.environ.get("SITE_DIR", "~/qa-agent-site"))
+PREVIEW = os.environ.get("PREVIEW") == "1"
+UPDATE_BASE_URL = os.environ.get("UPDATE_BASE_URL", "https://lvan826199.github.io/dingtalk-group-assistant/").rstrip("/")
+DOCS = [("分享-可直接部署并运行AI监控钉钉群并自动处理.md", "部署文档（新同事从这里开始）", "下载部署文档，拖给 AI 发「开始」；安装包可选"),
         ("CHANGELOG.md", "更新记录", "每个版本改了什么"),
         ("roles/角色职责库.json", "角色职责库", "没有协作库时选角色用；可以自己增删改"),
         ("agent.py", "agent.py 源码", "助手主程序"),
@@ -17,10 +19,18 @@ for _img in ("console.jpg", "console-panel.jpg"):   # 3.0 操作台截图（演�
 ver = re.search(r'VERSION = "([^"]+)"', open(os.path.join(REPO, "agent.py"), encoding="utf-8").read()).group(1)
 rows = []
 for i, (name, title, note) in enumerate(DOCS):
-    src = os.path.join(REPO, "docs", name) if name.endswith(".md") and name != "CHANGELOG.md" else os.path.join(REPO, name)
+    if name.endswith(".md") and name != "CHANGELOG.md":
+        src = os.environ.get("DOC_SOURCE") or os.path.join(REPO, "docs", name)
+    else:
+        src = os.path.join(REPO, name)
     name = os.path.basename(name)
     dst = f"doc{i}" + os.path.splitext(name)[1]
-    shutil.copy(src, os.path.join(OUT, "files", dst))
+    target = os.path.join(OUT, "files", dst)
+    if PREVIEW and name == "agent.py":
+        data = open(src, encoding="utf-8").read().replace("https://lvan826199.github.io/dingtalk-group-assistant/", UPDATE_BASE_URL)
+        open(target, "w", encoding="utf-8").write(data)
+    else:
+        shutil.copy(src, target)
     kb = os.path.getsize(src) // 1024 + 1
     rows.append(f'<li><div><a class="t" href="view.html?f={dst}&n={html.escape(name)}">{html.escape(title)}</a><span class="n">{html.escape(note)}</span></div>'
                 f'<a class="dl" href="files/{dst}" download="{html.escape(name)}">下载 · {kb} KB</a></li>')
@@ -33,7 +43,13 @@ for i, (name, title, note) in enumerate(DOCS):
     cards.append(f'<div class="dl"><b>{html.escape(title)}</b><span>{html.escape(note)} · {kb} KB</span><div class="row">'
                  f'<a href="view.html?f={dst}&n={html.escape(name)}">在线看</a><a href="files/{dst}" download="{html.escape(name)}">下载</a></div></div>')
 page = open(os.path.join(HERE, "template.html"), encoding="utf-8").read()
+if PREVIEW:
+    banner = '<div style="background:#b42318;color:#fff;text-align:center;font-weight:800;padding:12px 16px;letter-spacing:.04em">预览版，未发布 · 此页面和安装包只供验收，正式用户仍使用 8090 的 v3.0</div>'
+    page = page.replace("<body>", "<body>" + banner, 1)
 for k, v in {"{{VER}}": html.escape(ver), "{{VER_SHORT}}": html.escape(ver.split()[0]), "{{DOC0}}": html.escape(DOCS[0][0]),
+             "{{PACKAGE_WINDOWS}}": "files/群消息助手-" + ver.split()[0] + "-windows.zip",
+             "{{PACKAGE_MACOS}}": "files/群消息助手-" + ver.split()[0] + "-macos.zip",
+             "{{PACKAGE_LINUX}}": "files/群消息助手-" + ver.split()[0] + "-linux.tar.gz",
              "{{CHANGELOG}}": cl, "{{DOWNLOADS}}": "".join(cards)}.items():
     page = page.replace(k, v)
 import hashlib   # 静态文件按内容取短哈希当 ?v=，内容一变浏览器就重新取（11-19：版本号不变时用户看到的是旧缓存）
@@ -62,3 +78,6 @@ if(f.endsWith('.json')){{let d;try{{d=JSON.parse(t)}}catch(e){{}}if(d&&d['角色
 else{{c.innerHTML=marked.parse(t.replace(/</g,'&lt;'));}}}});}}</script></body></html>""")
 json.dump({"version": ver}, open(os.path.join(OUT, "version.json"), "w"))
 print("网页已生成", OUT, ver)
+
+subprocess.run([sys.executable, "-I", os.path.join(REPO, "tools", "build_package.py"), "--output", os.path.join(OUT, "files"),
+                "--doc-source", os.environ.get("DOC_SOURCE", ""), "--update-base-url", UPDATE_BASE_URL], check=True)

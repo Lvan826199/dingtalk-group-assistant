@@ -17,10 +17,11 @@ def make_agent(tmp_path, monkeypatch):
         home = tmp_path / "home"; app = tmp_path / "app"
         (home / ".qa-agent").mkdir(parents=True, exist_ok=True); app.mkdir(exist_ok=True)
         shutil.copy(os.path.join(ROOT, "agent.py"), app / "agent.py")
+        shutil.copy(os.path.join(ROOT, "package_runtime.py"), app / "package_runtime.py")
         if os.path.exists(os.path.join(ROOT, "console.py")):
             shutil.copy(os.path.join(ROOT, "console.py"), app / "console.py")
         (app / "工作手册.md").write_text("# 手册\n", encoding="utf-8")
-        base = {"my_name": "本人", "groups": {}, "readonly_groups": {}, "notify_group": "cidN", "scope_confirmed": True}
+        base = {"my_name": "本人", "groups": {}, "readonly_groups": {}, "notify_group": "cidN", "scope_confirmed": True, "popup": False}
         (home / ".qa-agent" / "config.json").write_text(json.dumps({**base, **(cfg or {})}, ensure_ascii=False), encoding="utf-8")
         monkeypatch.setenv("HOME", str(home)); monkeypatch.setenv("USERPROFILE", str(home))
         name = "agent_" + uuid.uuid4().hex

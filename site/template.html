@@ -78,17 +78,17 @@
     <div><b>Windows / macOS / Linux</b><span>助手跑在你自己的电脑上，记忆和配置都在本机。</span></div>
     <div><b>AI 编程助手</b><span>你平时用哪个就用哪个（Codex、Claude Code、DSH、WorkBuddy、Trae、Qoder 等）；部署和每条消息的判断都用它。</span></div>
     <div><b>钉钉 CLI（dws）</b><span>你自己扫码登录 <code>dws auth login</code>，不代填任何凭据。</span></div>
-    <div><b>Python 3.10+ / Git / Node</b><span>AI 助手第 0 步先认出你的系统，用什么命令它自己定，再逐个检查。</span></div>
+    <div><b>Python 3.10+ / Git / Node</b><span>AI 助手第 1 步先认出你的系统，用什么命令它自己定，再逐个检查。</span></div>
   </div>
   <div class="guide-layout">
     <div>
-      <div class="step-card" id="s1"><div class="step-heading"><span class="no">01</span><h3>下载部署文档</h3></div>
-        <ul class="pts"><li>就是<b>一份 Markdown 文件</b>：给 AI 助手的完整指令、代码和工作手册都在里面</li><li><mark>不用另外下载程序</mark></li></ul>
+      <div class="step-card" id="s1"><div class="step-heading"><span class="no">01</span><h3>下载部署文档，直接开始</h3></div>
+        <ul class="pts"><li>把文档拖给你的 AI 助手，发「开始」；AI 会按步骤完成配置，不需要先找安装目录</li><li>想一键安装或以后方便升级，再按下面的可选入口下载对应系统安装包</li></ul>
         <div class="hero-actions" style="margin-top:14px"><a class="button primary" href="files/doc0.md" download="{{DOC0}}">下载部署文档</a><button class="button ghost" data-copy-doc>复制部署文档</button><a class="button ghost" href="view.html?f=doc0.md&n={{DOC0}}">在线看全文</a></div>
-        <ul class="pts sub"><li>不想下载文件：点「<b>复制部署文档</b>」，直接粘贴给你的 AI 助手</li><li>想看原文：<a href="view.html?f=doc0.md&n={{DOC0}}&raw=1">以 Markdown 格式查看</a></li></ul></div>
-      <div class="step-card" id="s2"><div class="step-heading"><span class="no">02</span><h3>拖进你的 AI 助手，发「部署」</h3></div>
-        <ul class="pts flow"><li>查环境</li><li>给你看风险</li><li>认出你是谁</li><li>一步步问你选项（<mark>回数字就行</mark>）</li></ul>
-        <div class="cmd"><code>部署</code><button class="copy-button" data-copy="部署">复制</button></div></div>
+        <div class="hero-actions"><a class="link-button" data-package="windows" href="{{PACKAGE_WINDOWS}}" download>可选：Windows 安装包</a><a class="link-button" data-package="macos" href="{{PACKAGE_MACOS}}" download>macOS 安装包</a><a class="link-button" data-package="linux" href="{{PACKAGE_LINUX}}" download>Linux 安装包</a></div></div>
+      <div class="step-card" id="s2"><div class="step-heading"><span class="no">02</span><h3>把文档交给 AI，发「开始」</h3></div>
+        <ul class="pts"><li>AI 会确认身份、职责、群和提醒方式，再建立记忆</li><li>已经运行安装包的用户也从这里继续；不能运行安装包时按文档第三节手动安装</li></ul>
+        <div class="cmd"><code>开始</code><button class="copy-button" data-copy="开始">复制</button></div></div>
       <div class="step-card" id="s3"><div class="step-heading"><span class="no">03</span><h3>确认角色、职责范围和回复规则</h3></div>
         <ul class="pts"><li><b>有协作库</b>：按协作库认出你的角色和职责</li>
         <li><b>没有协作库</b>：从<span class="key">角色职责库</span>选，可多选——产品、Android、iOS、H5、网页版、服务端、剧中台、推荐、测试、运营、后台 UI、项目负责人</li>
@@ -99,14 +99,14 @@
         <li><span class="tag-new">还没有</span>AI 助手运行 <code>setup-notify</code>，用钉钉 CLI <b>自动建好</b>只有你自己的提醒群</li>
         <li>机器人要<b>你点一下</b>（钉钉不允许程序代建，约 1 分钟）：<span class="key">群设置 → 机器人 → 自定义 → 勾「加签」</span></li>
         <li>把 Webhook 地址和 SEC 密钥<b>直接发在群里</b>，助手自动写进配置、发一条自检，<mark>不用改任何文件</mark></li></ul></div>
-      <div class="step-card" id="s5"><div class="step-heading"><span class="no">05</span><h3>自检，看到版本号就好了</h3></div>
+      <div class="step-card" id="s5"><div class="step-heading"><span class="no">05</span><h3>配置后自检，确认各项通过</h3></div>
         <ul class="pts"><li>AI 助手跑一次自检，并下载内置表情包索引</li>
-        <li>设好<b>每天 09:00 和登录时自动启动</b>（Windows 计划任务 / macOS LaunchAgent / Linux systemd）</li>
-        <li>提醒群收到「<b>助手自检</b>」= 机器人通了；再收到「<b>打开操作台</b>」链接 = <mark>全部装好</mark></li></ul>
+        <li>安装包已设好<b>每天 09:00 和登录时自动启动</b>，AI 核对即可（Windows 计划任务 / macOS LaunchAgent / Linux systemd）</li>
+        <li>自检各项通过，并能打开操作台；提醒群收到「<b>助手自检</b>」说明机器人已连通</li></ul>
         <div class="cmd"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py check">复制</button></div></div>
     </div>
     <aside class="progress-card" aria-label="上手进度"><h3>上手进度 <span id="pc">0 / 5</span></h3><div class="bar"><i id="pb"></i></div>
-      <label><input type="checkbox" data-s="1">下载部署文档</label><label><input type="checkbox" data-s="2">拖进 AI 助手发「部署」</label>
+        <label><input type="checkbox" data-s="1">下载部署文档</label><label><input type="checkbox" data-s="2">交给 AI 助手发「开始」</label>
       <label><input type="checkbox" data-s="3">确认职责范围</label><label><input type="checkbox" data-s="4">提醒群加机器人</label><label><input type="checkbox" data-s="5">自检通过</label>
       <button class="reset" id="reset">重置进度</button></aside>
   </div>
@@ -124,21 +124,17 @@
     <div class="use"><h3>表情和表情包</h3><p>默认关。开了以后只在草稿里建议一张，你确认发送时才一起发；内置约 840 张。</p><div class="tags"><code>表情 开</code><code>表情 关</code><code>表情包</code><code>删表情包 名字</code></div></div>
     <div class="use"><h3>角色职责库</h3><p>对你的 AI 助手说就行；改到你在用的角色，会先念给你二次确认。</p><div class="tags"><code>角色职责库加一个角色</code><code>删掉某个角色</code><code>我换角色了</code></div></div>
     <div class="use"><h3>助手状态</h3><p>在电脑上运行，看环境、今天处理了多少。</p><div class="tags"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><code data-win="python C:\qa-agent\agent.py status" data-unix="python3 ~/qa-agent/agent.py status">python C:\qa-agent\agent.py status</code></div></div>
-    <div class="use"><h3>实时汇报（默认自动打开）</h3><p>Windows、Mac、Linux 桌面随助手自动显示。下面命令仅用于关闭后重开，加 --once 只看最近 20 条。</p><div class="cmd"><code data-win="python C:\qa-agent\agent.py watch" data-unix="python3 ~/qa-agent/agent.py watch">python C:\qa-agent\agent.py watch</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py watch">复制</button></div></div>
+    <div class="use"><h3>实时汇报（按需打开）</h3><p>默认在操作台看状态；需要逐条日志时运行下面命令，加 --once 只看最近 20 条。</p><div class="cmd"><code data-win="python C:\qa-agent\agent.py watch" data-unix="python3 ~/qa-agent/agent.py watch">python C:\qa-agent\agent.py watch</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py watch">复制</button></div></div>
   </div>
 </section>
 
 <section class="block" id="upgrade">
   <div class="section-heading"><div class="section-kicker">已经装过</div><h2>升级到 {{VER_SHORT}}</h2><p>升级不会覆盖你已有的规则：新规则和你的设置有冲突时，AI 助手会一条条问你。</p></div>
   <div class="step-card" style="margin-top:24px">
-    <div class="step-heading"><span class="no">①</span><h3>下载最新部署文档，拖进你的 AI 助手，发</h3></div>
-    <div class="cmd"><code>升级到最新版</code><button class="copy-button" data-copy="升级到最新版">复制</button></div>
-    <div class="step-heading" style="margin-top:22px"><span class="no">②</span><h3>按提示重建一次记忆（修了把人认错的问题）</h3></div>
-    <div class="cmd"><code data-win="python C:\qa-agent\bootstrap_memory.py" data-unix="python3 ~/qa-agent/bootstrap_memory.py">python C:\qa-agent\bootstrap_memory.py</code><button class="copy-button" data-copy="python C:\qa-agent\bootstrap_memory.py">复制</button></div>
-    <div class="step-heading" style="margin-top:22px"><span class="no">③</span><h3>自检，看到「版本 {{VER_SHORT}}」</h3></div>
-    <div class="cmd"><code data-win="python C:\qa-agent\agent.py check" data-unix="python3 ~/qa-agent/agent.py check">python C:\qa-agent\agent.py check</code><button class="copy-button" data-copy="python C:\qa-agent\agent.py check">复制</button></div>
-    <div class="callout">3.0 升级会新增 <code>console.py</code>（操作台），重启后台后提醒群收到「打开操作台」链接。提醒群不再刷值守状态，看操作台顶栏绿点；原来的汇报窗口默认关闭。</div>
-    <div class="callout">v2.8 起不再自动回复：所有消息改成草稿、你确认后才发。</div>
+    <div class="step-heading"><span class="no">①</span><h3>提醒群收到新版本通知后，回</h3></div>
+    <div class="cmd"><code>升级</code><button class="copy-button" data-copy="升级">复制</button></div>
+    <ul class="pts"><li>助手下载对应安装包，校验通过后替换程序、重启，并在提醒群回执新版本</li><li>配置、记忆、草稿和个人规则保留；不回复就不升级</li></ul>
+    <div class="callout">3.0 及更早版本首次转到 3.1：先用上方安装包升级一次，以后在提醒群回「升级」即可。不必重建已有记忆。</div>
   </div>
 </section>
 
@@ -155,10 +151,11 @@
     <details><summary>会读我的私聊吗？</summary><p>默认不读私聊，只监听部署时你选的群。</p></details>
     <details><summary>凭据存在哪？</summary><p>都在你自己的电脑上（Windows <code>%USERPROFILE%\.qa-agent\config.json</code>，macOS / Linux <code>~/.qa-agent/config.json</code>），不上传、不进仓库；钉钉登录由你自己扫码。</p></details>
     <details><summary>用哪个 AI？</summary><p>你平时用哪个就用哪个，账号、API Key 你自己配，我们不管。部署时 AI 助手会把自己记成「判断用的 AI」；想换就对 AI 助手说「判断改用 Claude Code」。</p></details>
+    <details><summary>安装包会替我登录或安装依赖吗？</summary><p>不会。需要 Python 3.10+、钉钉 CLI、Git、Node 和一个可用 AI 命令行；缺什么会用中文提示。钉钉登录由你本人运行 dws auth login 扫码完成，不需要管理员权限。</p></details>
     <details><summary>Mac 上装在哪？</summary><p>装在 <code>~/qa-agent</code>，不要放桌面、文稿或下载：系统隐私保护会让后台任务读不到这些目录。</p></details>
     <details><summary>跨版本升级会有影响吗？</summary><p>可以直接升级到最新版本，不需要逐级安装。升级会替换程序和部署文档，保留 <code>config.json</code>、<code>memory/</code>、<code>drafts/</code>、工作手册和角色职责库；新配置项只在原配置没有时使用默认值。v2.8 起所有回复先写草稿，必须由你确认后才发送；旧版本的自动回复设置升级后会按提醒群提示处理，不会在你不知情时继续自动发消息。升级前建议备份配置和工作手册，升级完成后重启并运行 <code>agent.py check</code>。</p></details>
     <details><summary>表情包为什么不会动？</summary><p>钉钉用 Markdown 图片发出时只显示第一帧，这是钉钉的限制。</p></details>
-    <details><summary>怎样看到每条消息的处理过程？</summary><p>默认随助手启动自动打开：Windows 独立控制台、Mac 终端、Linux 桌面终端；已有前台终端直接显示，不必输入命令。窗口先显示最近 20 条，再跟随新记录，带时间、群名、发送人、消息编号和处理结论。草稿待确认、待你决定、发送失败都会分别显示；不会把草稿当成已经发出。旧版本记录无法补出当时未记录的依据，升级后需重启后台。</p></details>
+    <details><summary>怎样看到每条消息的处理过程？</summary><p>默认在操作台查看状态；按需运行 watch，或设 report_window: true 随后台打开 Windows 控制台、Mac 终端、Linux 桌面终端。窗口先显示最近 20 条，再跟随新记录，带时间、群名、发送人、消息编号和处理结论。草稿待确认、待你决定、发送失败都会分别显示；不会把草稿当成已经发出。旧版本记录无法补出当时未记录的依据，升级后需重启后台。</p></details>
     <details><summary>关掉汇报窗口会停止助手吗？窗口没动静怎么办？</summary><p>自动窗口只读已有日志，不另开监听；关掉它不影响独立运行的后台，重启后台会重新打开，已有自动窗口则不重复打开。Linux 没有图形桌面时会明确提示并继续写日志。它不会把日志插进已有的 AI 对话。没有新记录时窗口每分钟提示最近记录时间；先确认后台已启动，再用上方 check、status 命令和异常日志排查。窗口打开或心跳存在不能证明每条消息已处理。</p></details>
     <details><summary>遇到问题找谁？</summary><p>把 AI 助手的报错截图发给梦无矶。</p></details>
   </div>

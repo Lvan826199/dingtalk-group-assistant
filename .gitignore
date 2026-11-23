@@ -5,3 +5,17 @@ drafts/
 memory/
 .DS_Store
 .tmp/
+# 个人配置和运行数据不进入公共版本
+config.json
+.qa-agent/
+audit/
+history/
+runs/
+inbox.jsonl
+待处理.md
+工作手册.md
+角色职责库.json
+.update-queue.json
+console_token
+dist/
+*.new

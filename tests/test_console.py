@@ -13,7 +13,7 @@ def _boot(make_agent):
     import importlib; console = importlib.import_module("console"); importlib.reload(console)
     srv = console.start(vars(a))
     assert srv
-    e1 = {"sender": "同事甲", "content": "@本人 765 补测好了吗", "conversation_id": "cidG", "message_id": "msgAAAAA11111"}
+    e1 = {"sender": "同事甲", "content": "@本人 Jira 24680 补测好了吗", "conversation_id": "cidG", "message_id": "msgAAAAA11111"}
     e2 = {"sender": "同事乙", "content": "@本人 这个归你吗", "conversation_id": "cidG", "message_id": "msgBBBBB22222"}
     n1 = a.open_add(e1, "draft", "草稿"); f = a.save_draft(e1, "好了，已补测通过")
     p = os.path.join(a.HOME, "drafts", f); d = json.load(open(p, encoding="utf-8")); d["todo"] = n1; json.dump(d, open(p, "w", encoding="utf-8"))
@@ -46,16 +46,16 @@ def test_console_requires_key_and_splits_columns(make_agent):
 def test_console_send_goes_through_command_and_syncs(make_agent):
     a, console, notes, calls, n1, n2 = _boot(make_agent)
     a.run = lambda args, **k: calls.append(args) or R(0, '{"success": true}')
-    assert _post(console, {"no": n1, "action": "edit_send", "text": "好了，765 已补测通过"})["msg"] == "已处理"
+    assert _post(console, {"no": n1, "action": "edit_send", "text": "好了，24680 已补测通过"})["msg"] == "已处理"
     sent = [c for c in calls if "+messages-reply" in c]
-    assert sent and "765 已补测通过" in " ".join(sent[-1])                       # 真的发到原会话
+    assert sent and "24680 已补测通过" in " ".join(sent[-1])                       # 真的发到原会话
     assert any(n1 in t and "已处理" in t for t, _ in notes)                       # 提醒群收到「已处理」
     s = console.state()
     assert n1 not in [c["no"] for c in s["send"]] and s["done"][0]["no"] == n1    # 页面：移到「已处理」
     assert os.path.exists(a.AUDIT)                                               # 留痕
-    d = console.state()["done"][0]; assert d["result"] == "已发送" and "765 已补测通过" in d["sent"]   # 「已处理」里看得到发出的内容
+    d = console.state()["done"][0]; assert d["result"] == "已发送" and "24680 已补测通过" in d["sent"]   # 「已处理」里看得到发出的内容
     det = json.loads(_get(console, "/api/done?no=" + n1.replace("#", "%23")).read())
-    assert det["sent"].endswith("765 已补测通过") and "改过草稿" in det["confirm"] and det["text"].startswith("@本人 765")   # 点开看详情
+    assert det["sent"].endswith("24680 已补测通过") and "改过草稿" in det["confirm"] and det["text"].startswith("@本人 Jira 24680")   # 点开看详情
 
 
 def test_console_not_mine_and_reply_new(make_agent):
@@ -69,6 +69,106 @@ def test_console_not_mine_and_reply_new(make_agent):
     assert sorted(d["result"] for d in s["done"]) == ["不发", "已发送"]
 
 
+def test_reopened_item_keeps_original_reply_and_execution_separate(make_agent):
+    a, console, notes, calls, n1, _ = _boot(make_agent)
+    original = a._open_load()[n1]["event"].copy()
+    a.audit(n1, original, "我会核验并保留证据", "本人确认")
+    a.open_close(n1, "已确认发出")
+    os.remove(a.draft_by_no(n1)[0])
+    a._commit_save({"comment:135790|jira:24680": {
+        "task_key": "comment:135790|jira:24680", "status": "waiting_resources",
+        "original_message_ids": [original["message_id"]], "conversation_ids": ["cidG"],
+        "next_action": "等待授权入口"}})
+    a.open_add({**original, "content": "后台缺口说明：24680待执行入口"}, "escalate", "缺执行入口")
+    c = next(c for c in console.state()["judge"] if c["no"] == n1)
+    assert c["text"] == original["content"]
+    assert c["sent"] == "我会核验并保留证据" and c["reply_status"] == "已回复"
+    assert c["commitment"]["status"] == "waiting_resources"
+    assert c["task_key"] == "comment:135790|jira:24680"
+    assert a._commit_load()[c["task_key"]]["status"] == "waiting_resources"
+
+
+def test_manual_done_requires_note_keeps_execution_and_never_sends(make_agent):
+    a, console, notes, calls, n1, _ = _boot(make_agent)
+    x = a._open_load()[n1]
+    a._commit_save({x["task_key"]: {"task_key": x["task_key"], "status": "waiting_resources",
+                                    "original_message_ids": [x["event"]["message_id"]],
+                                    "conversation_ids": [x["cid"]]}})
+    before = a._commit_load()
+    assert _post(console, {"no": n1, "action": "manual_done"})["msg"] == "请填写处理说明"
+    assert n1 in a._open_load()
+    calls.clear()
+    assert _post(console, {"no": n1, "action": "manual_done", "text": "已在钉钉回过，等研发样本"})["msg"] == "已处理"
+    assert n1 not in a._open_load() and a.draft_by_no(n1)[0] is None
+    assert a._commit_load() == before
+    assert not any("+messages-reply" in c or "+messages-send" in c for c in calls)
+    detail = console.done_detail(n1)
+    assert "等研发样本" in detail["why"] and detail["commitment"]["status"] == "waiting_resources"
+    assert detail["sent"] == ""
+
+
+def test_duplicate_open_preserves_source_and_questions(make_agent):
+    a, _, _, _, n1, _ = _boot(make_agent)
+    items = a._open_load(); original = items[n1]["event"].copy()
+    items[n1]["qa"] = [{"问": "之前回过吗", "答": "回过"}]; a._open_save(items)
+    assert a.open_add({**original, "content": "后台说明"}, "escalate", "等待前置") == n1
+    x = a._open_load()[n1]
+    assert x["event"] == original and x["qa"][0]["答"] == "回过"
+    assert x["reason"] == "等待前置"
+
+
+def test_history_does_not_join_different_message_or_group(make_agent):
+    a, console, _, _, n1, _ = _boot(make_agent)
+    x = a._open_load()[n1]
+    a.audit(n1, {**x["event"], "message_id": "unrelated-message"}, "别的事项回复", "确认")
+    assert console._message_context(n1, x)["sent"] == ""
+    a.audit(n1, x["event"], "别的群回复", "确认")
+    changed = {**x, "cid": "cidOther", "event": {**x["event"], "conversation_id": "cidOther"}}
+    assert console._message_context(n1, changed)["sent"] == ""
+
+
+def test_escalation_reopen_restores_original_instead_of_backend_summary(make_agent):
+    a, console, notes, calls, n1, _ = _boot(make_agent)
+    original = a._open_load()[n1]["event"].copy()
+    a.audit(n1, original, "已承诺核验", "本人确认")
+    a.open_close(n1, "已发送")
+    a.notify = lambda *args: True
+    u = console.url().split("?")[0].rstrip("/") + "/api/escalate"
+    body = {"event": {**original, "content": "后台核查缺少前置"}, "reason": "等授权入口"}
+    req = urllib.request.Request(u, data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", "X-Key": console.TOKEN}, method="POST")
+    assert json.loads(urllib.request.urlopen(req, timeout=5).read())["no"] == n1
+    x = a._open_load()[n1]
+    assert x["event"]["content"] == original["content"]
+    assert "后台核查缺少前置" not in x["what"]
+    assert not any("+messages-reply" in c for c in calls)
+
+
+def test_escalation_gets_reviewable_ai_draft(make_agent, monkeypatch):
+    a, console, notes, calls, *_ = _boot(make_agent)
+    a.clear_all()
+    e = {"sender": "项目助手", "content": "@本人 请确认回归结论", "conversation_id": "cidG", "message_id": "msgESCALATE777"}
+    monkeypatch.setattr(a, "decide", lambda batch: {"action": "escalate", "mine": True, "risk": "high",
+                                                       "text": "已核实，回归结论我确认后回复。",
+                                                       "reason": "需要本人确认最终结论"})
+    a.handle([e])
+    s = console.state()
+    assert len(s["send"]) == 1 and s["judge"] == []
+    assert s["send"][0]["draft"] == "已核实，回归结论我确认后回复。"
+
+
+def test_escalation_asks_ai_when_decision_has_no_text(make_agent, monkeypatch):
+    a, console, notes, calls, *_ = _boot(make_agent)
+    a.clear_all()
+    e = {"sender": "项目助手", "content": "@本人 请确认回归结论", "conversation_id": "cidG", "message_id": "msgESCALATE888"}
+    monkeypatch.setattr(a, "decide", lambda batch: {"action": "escalate", "mine": True, "risk": "high",
+                                                       "text": "", "reason": "需要本人确认最终结论"})
+    monkeypatch.setattr(a, "ai_exec", lambda prompt, timeout=300: '{"draft":"我先核对证据，确认后回复。"}')
+    a.handle([e])
+    s = console.state()
+    assert len(s["send"]) == 1 and s["send"][0]["draft"] == "我先核对证据，确认后回复。"
+
+
 def test_todo_question_in_notify_group_gets_console_link(make_agent):
     a, console, notes, calls, n1, n2 = _boot(make_agent)
     for q in ("有什么待办", "还有什么没处理的？", "待回复"):
@@ -79,6 +179,7 @@ def test_todo_question_in_notify_group_gets_console_link(make_agent):
 
 def test_new_todo_pops_console_with_focus_and_can_be_turned_off(make_agent, monkeypatch):
     a, console, notes, calls, n1, n2 = _boot(make_agent)
+    a.CFG["popup"] = True
     opened = []
     monkeypatch.setattr(console.os, "startfile", lambda u: opened.append(u), raising=False)
     a.popen = lambda args, **k: opened.append(args[-1])
@@ -144,6 +245,7 @@ def test_console_lan_mode_link_uses_lan_address(make_agent):
 
 def test_console_opens_browser_on_start(make_agent, monkeypatch):
     a, notes, _ = make_agent({"console_port": _port()})
+    a.CFG["popup"] = True
     opened = []
     a.popen = lambda args, **k: opened.append(args[-1])
     monkeypatch.setattr(a.os, "startfile", lambda u: opened.append(u), raising=False)

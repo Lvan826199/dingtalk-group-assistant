@@ -53,6 +53,22 @@ def test_others_conversation_skipped(make_agent, content, drafted):
     assert bool(drafts(a)) is drafted and not sent(calls)
 
 
+def test_raw_dingtalk_mention_and_name_in_body_are_not_treated_as_other_only(make_agent):
+    a, _, _ = make_agent({"my_name": "示例用户", "groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "high", "text": "已收到，进入 QA 复核。"}
+    e = msg("<@example-open-id> 请复核接口（示例用户）", sender="示例同事", mid="mMENTION")
+    assert a.relevant(e)
+    assert "草稿待确认" in a.handle([e])
+    assert a.event_mentions_me(e)
+
+
+def test_new_item_notification_contains_group_task_and_time(make_agent):
+    a, notes, _ = make_agent({"my_name": "示例用户", "groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "high", "text": "已收到，进入 QA 复核。"}
+    a.handle([msg("@示例用户 TICKET-845 请复核", sender="示例同事", mid="mNOTICE") | {"create_time": "2026-11-20 14:54:43"}])
+    assert notes and "群：测试群" in notes[-1][1] and "TICKET-845" in notes[-1][1] and "2026-11-20 14:54:43" in notes[-1][1]
+
+
 # ---------------- v2.8 决策权交给人：任何配置都不会自动发出
 @pytest.mark.parametrize("cfg", [{}, {"mode": "auto"}, {"auto_reply_groups": [GROUP]}, {"mode": "auto", "auto_reply_groups": [GROUP], "emoji": True}])
 def test_never_auto_send(make_agent, cfg):
@@ -121,7 +137,8 @@ def test_watch_reads_reports_without_starting_listener_or_calling_ai(make_agent,
 
 
 def test_default_report_window_uses_current_terminal_and_respects_disable(make_agent, monkeypatch):
-    a, _, _ = make_agent({"report_window": True})   # v3.0 起默认关（看操作台），这里测打开时的行为
+    a, _, _ = make_agent({})
+    assert a.CFG["report_window"] is True
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(a.subprocess, "Popen", lambda *x, **k: pytest.fail("已有终端不应另开窗口"))
     a.open_report_window()
@@ -139,8 +156,11 @@ def test_normal_start_opens_report_window_but_watch_does_not(make_agent, monkeyp
     class IdleThread:
         def __init__(self, **kw): actions.append("thread")
         def start(self): pass
+        def join(self, timeout=None): pass
+        def is_alive(self): return True
     monkeypatch.setattr(a.threading, "Thread", IdleThread)
-    window = iter([True, False]); a.in_window = lambda: next(window)
+    a.in_window = lambda: True
+    monkeypatch.setattr(a.UPDATE_EXIT, "wait", lambda timeout: True)
     a.daily_summary = lambda: None
     a.main()
     assert actions[0] == "report" and actions.count("report") == 1
@@ -174,6 +194,38 @@ def test_default_report_window_opens_readonly_viewer_on_each_platform(make_agent
         else:
             assert args[:2] == ["/usr/bin/x-terminal-emulator", "-e"]
     assert not a.CHILDREN and not a.SEEN and a.Q.empty()
+
+
+def test_confirmed_draft_creates_commitment_without_second_instruction(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "high",
+                          "text": "我会按 Jira 24680 评论 135790 验证并留证。", "reason": "明确 QA 验证安排"}
+    event = msg("@本人 正式服按 Jira 24680 评论 135790 验证，证据闭环后再撤临时 ELB", mid="msgCOMMIT24680")
+    a.handle([event])
+    confirm(a, "#24680", "可以发送")
+    commits = json.load(open(a.COMMITMENTS_PATH, encoding="utf-8"))
+    assert len(commits) == 1
+    rec = next(iter(commits.values()))
+    assert rec["status"] == "committed" and rec["commitment_text"].startswith("我会按")
+    assert any("已承诺执行" in line for line in open(a.STATUS_LOG, encoding="utf-8"))
+
+
+def test_same_task_from_second_group_reuses_existing_open_item(make_agent):
+    a, notes, _ = make_agent({"groups": {GROUP: "测试群", "cidH": "协调群"}})
+    first = msg("@本人 正式服按 Jira 24680 评论 135790 验 Go 推送", cid=GROUP, mid="msgTASK111")
+    second = msg("@本人 已上线，继续按 24680 / 135790 验证", cid="cidH", mid="msgTASK222")
+    n1 = a.open_add(first, "draft", "草稿")
+    n2 = a.open_add(second, "draft", "重复安排")
+    assert n1 == n2
+    item = a._open_load()[n1]
+    assert item["task_key"] == "comment:135790|jira:24680"
+    assert item["related_message_ids"] == ["msgTASK222"]
+
+
+def test_task_key_keeps_issue_number(make_agent):
+    a, _, _ = make_agent({})
+    assert a.task_key(msg("OPS-1999-019 防刷验收")) == "issue:OPS-1999-019"
+    assert a.task_key(msg("OPS-1999-018 R03 复测")) == "issue:OPS-1999-018"
 
 
 def test_report_window_headless_or_launch_failure_keeps_backend_available(make_agent, monkeypatch):
@@ -384,10 +436,10 @@ def test_self_update_check(make_agent, monkeypatch):
         def __enter__(self): return self
         def __exit__(self, *x): return False
 
-    monkeypatch.setattr(a.urllib.request, "urlopen", lambda *x, **k: Resp('{"version": "v99.1 2099-01-01"}'))
+    monkeypatch.setattr(a.urllib.request, "urlopen", lambda *x, **k: Resp(json.dumps({'version':'v99.1','windows':'package.zip','macos':'package.zip','linux':'package.zip','sha256':{'package.zip':'a'*64}})))
     a.self_update_check(); a.self_update_check()
     assert len([t for t, _ in notes if "新版本 v99.1" in t]) == 1
-    monkeypatch.setattr(a.urllib.request, "urlopen", lambda *x, **k: Resp(f'VERSION = "{a.VERSION}"'))
+    monkeypatch.setattr(a.urllib.request, "urlopen", lambda *x, **k: Resp(json.dumps({'version':a.VERSION.split()[0],'windows':'package.zip','macos':'package.zip','linux':'package.zip','sha256':{'package.zip':'a'*64}})))
     n = len(notes); a.self_update_check()
     assert len(notes) == n
     assert a._ver("v2.10") > a._ver("v2.9") and a._ver("v2.7 2026-11-18") == (2, 7)
@@ -477,3 +529,137 @@ def test_backfill_catches_filtered_and_missed(make_agent, monkeypatch):
     while not a.Q.empty():
         got.append(a.Q.get()["message_id"])
     assert got == ["m1"]
+
+
+def test_mention_metadata_and_unresolved_raw_mention_enter_judgment(make_agent):
+    a, _, _ = make_agent({"user_id": "user-me"})
+    assert a.relevant(msg("请复核", mid="meta") | {"atUserIds": ["user-me"]})
+    assert a.relevant(msg("<@unknown-app-id> 请复核", mid="raw"))
+    assert not a.event_mentions_me(msg("<@unknown-app-id> 请复核"))
+    assert not a.event_mentions_me(msg("@另一人 查一下") | {"sender_open_dingtalk_id": "user-me"})
+
+
+def test_robot_new_item_is_not_suppressed_and_actually_mentions_owner(make_agent, monkeypatch):
+    import urllib.request
+    a, _, _ = make_agent({"quiet_new_items": True, "webhook": "https://example.invalid/robot?x=1", "secret": "fixture-signing-key", "my_user_id": "owner-user-id"})
+    captured = []
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self): return b'{"errcode":0}'
+    def opening(req, **kwargs):
+        captured.append(json.loads(req.data)); return Response()
+    monkeypatch.setattr(urllib.request, "urlopen", opening)
+    # Restore real function; fixture normally replaces notify to avoid network.
+    import types
+    real = next(n for n in __import__('ast').parse(open(a.__file__, encoding="utf-8").read()).body if isinstance(n, __import__('ast').FunctionDef) and n.name == "notify")
+    namespace = dict(a.__dict__)
+    exec(compile(__import__('ast').Module(body=[real], type_ignores=[]), a.__file__, "exec"), namespace)
+    assert namespace["notify"]("📝 #TASK 草稿待确认", "群：测试群\n任务：845\n时间：14:54")
+    assert captured[0]["at"]["atUserIds"] == ["owner-user-id"]
+    assert "@owner-user-id" in captured[0]["markdown"]["text"]
+
+
+def test_ai_parse_failure_notifies_with_context_and_keeps_manual_decision(make_agent):
+    a, notes, _ = make_agent({"groups": {GROUP: "测试群"}})
+    a.ai_exec = lambda *args, **kwargs: "invalid output"
+    result = a.decide([msg("@本人 核合同", mid="mPARSE") | {"create_time": "2026-11-20 15:00:00"}])
+    assert result["action"] == "escalate"
+    assert "无法解析" in notes[-1][0] and "群：测试群" in notes[-1][1] and "15:00:00" in notes[-1][1]
+
+
+@pytest.mark.parametrize("line", ['[event] ready event_key=x', '[event] bus state=connected', '[event] transport {"state":"connected"}'])
+def test_normal_dws_connection_diagnostics_are_not_parse_failures(make_agent, line):
+    a, _, _ = make_agent()
+    assert not a.looks_like_json_event(line)
+
+
+def test_malformed_json_event_is_still_alertable(make_agent):
+    a, _, _ = make_agent()
+    assert a.looks_like_json_event('{"message_id": invalid')
+
+
+def test_runtime_alert_retries_failed_delivery_and_does_not_hide_other_tasks(make_agent):
+    a, _, _ = make_agent()
+    results = iter([False, True, True])
+    calls = []
+    a.notify = lambda title, body: calls.append((title, body)) or next(results)
+    a.JOB_CONTEXT.event = msg("核验", mid="first")
+    assert not a.runtime_alert("timeout", "超时", "背景")
+    assert a.runtime_alert("timeout", "超时", "背景")
+    assert not a.runtime_alert("timeout", "超时", "背景")
+    a.JOB_CONTEXT.event = msg("另一任务", mid="second")
+    assert a.runtime_alert("timeout", "超时", "另一任务背景")
+    assert len(calls) == 3
+
+
+def test_worker_exception_preserves_task_and_notifies_owner(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.READY.put([msg("@本人 核验 TICKET-845", mid="mERROR")])
+    def fail(_):
+        raise TypeError("decision parser failed")
+    a.handle = fail
+    window = iter([True, False]); a.in_window = lambda: next(window)
+    a.worker()
+    pending = a._open_load()
+    assert pending["#ERROR"]["kind"] == "error"
+    assert "需要你指导" in notes[-1][0]
+    assert "群：测试群" in notes[-1][1] and "TICKET-845" in notes[-1][1]
+    assert "没有标成完成" in notes[-1][1]
+    rows = [json.loads(x) for x in open(a.STATUS_LOG, encoding="utf-8")]
+    assert rows[-1]["stage"] == "处理失败"
+    assert not sent(calls)
+
+
+def test_quoted_confirmation_without_number_sends_the_quoted_draft(make_agent):
+    a, _, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "text": "核对后的结果"}
+    a.handle([msg("@本人 核验", mid="mQUOTE")])
+    e = msg("@通知助手 可以发送", sender="本人", cid="cidN", mid="confirm-quoted")
+    e["quoted_message"] = {"content": "📝 #QUOTE 草稿待你确认。回 #QUOTE 可以发送。"}
+    a.relevant(e)
+    assert len(sent(calls)) == 1
+    assert "--content" in sent(calls)[0] and "--wait-delivery" in sent(calls)[0]
+    assert not a._open_load()
+
+
+def test_ambiguous_quoted_confirmation_does_not_guess_and_notifies(make_agent):
+    a, notes, calls = make_agent()
+    a.command(msg("可以发送") | {"quoted_message": {"text": "#FIRST / #OTHER"}})
+    assert not sent(calls)
+    assert "没能确定" in notes[-1][0]
+
+
+def test_extra_send_instructions_resolve_real_group_member_and_mention(make_agent):
+    a, _, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "text": "保留验证待办"}
+    a.handle([msg("@本人 验证", mid="mEXTRA")])
+    a.ai_exec = lambda *args, **kwargs: json.dumps({"text": "请 项目助手 确定返修范围，保留验证待办。", "at_names": ["项目助手"]})
+    def run(args, **kwargs):
+        calls.append(args)
+        if "+chat-members-list" in args:
+            return R(0, json.dumps({"complete": True, "users": [{"name": "项目助手", "nick": "项目助手", "openDingtalkId": "verified-项目助手"}]}))
+        return R(0, '{"deliveryStatus":"delivered","openMessageId":"sent-extra"}')
+    a.run = run
+    e = msg("@通知助手 可以发送，并且艾特项目助手，让它定", sender="本人", cid="cidN", mid="confirm-extra")
+    e["quoted_message"] = {"content": "#EXTRA 草稿待你确认"}
+    a.relevant(e)
+    outbound = [c for c in calls if "+messages-send" in c]
+    assert len(outbound) == 1 and "verified-项目助手" in outbound[0]
+    assert "<@verified-项目助手>" in outbound[0][outbound[0].index("--text") + 1]
+    assert not a._open_load()
+
+
+def test_extra_send_requirements_failure_keeps_draft_and_notifies(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "text": "保留验证待办"}
+    a.handle([msg("@本人 验证", mid="mEXTRA")])
+    a.ai_exec = lambda *args, **kwargs: "bad JSON"
+    a.command(msg("#EXTRA 可以发送，并且艾特项目助手，让它定"))
+    assert drafts(a) and a._open_load() and not sent(calls)
+    assert "确认指令处理失败" in notes[-1][0]
+
+
+def test_jira_issue_number_creates_a_durable_task_key(make_agent):
+    a, _, _ = make_agent()
+    assert a.task_key(msg("TICKET-845 交易历史验证")) == "jira:845"
