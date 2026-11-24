@@ -2,7 +2,7 @@
 
 > **直接开始**：把本文件拖给自己的 AI 助手，发「开始」。AI 会按步骤完成配置；如果希望一键安装或方便升级，再从指南页下载对应系统的安装包。
 >
-> 作者：梦无矶　版本：v3.2.3 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
+> 作者：梦无矶　版本：v3.3 2026-11-19（安装包、本人确认后自动升级、本机操作台）　适用：Windows / macOS / Linux。
 >
 > **已经装过**：把本文件拖给 AI 助手发「开始」即可继续使用；想用安装包升级时再运行对应系统的安装脚本，之后提醒群回「升级」即可。跨版本可直接装最新版，配置、记忆、草稿、工作手册、角色职责库、留痕和日志都保留。新规则与个人设置冲突时，AI 必须逐条请本人决定。
 
@@ -417,7 +417,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.2.3 2026-11-23"
+VERSION = "v3.3 2026-11-24"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -495,11 +495,38 @@ AI_PRESETS = {
 }
 
 
+_RELOCATED = {}
+
+
+def _relocate(exe):
+    """ai_cmd 写死的绝对路径失效时重新找（11-24 一位同事：Codex 桌面版从应用商店自动更新，
+    C:\\Program Files\\WindowsApps\\OpenAI.Codex_<版本>_x64__<签名>\\... 旧版本目录被删，判断全部失败）。
+    先按命令名在 PATH 里找；商店应用再用 Get-AppxPackage 取当前安装目录拼回原来的相对路径。找不到就原样返回。"""
+    if not exe or not os.path.isabs(exe) or os.path.exists(exe):
+        return exe
+    if exe in _RELOCATED and os.path.exists(_RELOCATED[exe]):
+        return _RELOCATED[exe]
+    found = shutil.which(os.path.splitext(os.path.basename(exe))[0])
+    m = re.search(r"[\\/]WindowsApps[\\/]([^\\/_]+)_[^\\/]+[\\/](.+)$", exe, re.I)
+    if not found and m and os.name == "nt":
+        r = run(["powershell", "-NoProfile", "-Command", f"(Get-AppxPackage -Name '{m.group(1)}' | Sort-Object Version | Select-Object -Last 1).InstallLocation"], timeout=30)
+        loc = (r.stdout or "").strip()
+        if loc and os.path.exists(os.path.join(loc, m.group(2))):
+            found = os.path.join(loc, m.group(2))
+    if found:
+        _RELOCATED[exe] = found
+        log("AI 命令路径已失效，改用", found)
+        return found
+    return exe
+
+
 def ai_engine(only=None):
     """返回 (显示名, 参数模板, prompt 传法)。ai_cmd 自定义优先（如 Trae：部署时按 traecli --help 填），其次 ai 指定的，最后自动找本机装了的。
     only=预设名时只看这一个（备用 AI 用）。"""
     if CFG.get("ai_cmd") and not only:
-        return CFG.get("ai", "自定义"), list(CFG["ai_cmd"]), CFG.get("ai_prompt", "stdin")
+        cmd = list(CFG["ai_cmd"])
+        cmd[0] = _relocate(cmd[0])
+        return CFG.get("ai", "自定义"), cmd, CFG.get("ai_prompt", "stdin")
     names = [only] if only else ([CFG["ai"]] if CFG.get("ai") in AI_PRESETS else list(AI_PRESETS))
     for k in names:
         pr = AI_PRESETS[k]
@@ -2380,6 +2407,8 @@ def decide(batch):  # noqa: C901
     t0 = time.time()
     raw = ai_exec(prompt, images=images) if images else ai_exec(prompt)
     log(ai_engine()[0], "用时", round(time.time() - t0, 1), "秒")
+    if not raw.strip():   # ai_exec 已提醒过「没有结果」，不再补一张「无法解析」（11-24 一位同事截图：同一条报了三张卡）
+        return {"action": "escalate", "reason": "AI 没有结果：" + (STATE.get("ai_last_error") or "没有输出")}
     try:
         decision = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
         if not isinstance(decision, dict) or decision.get("action") not in ("reply", "ignore", "escalate"):
