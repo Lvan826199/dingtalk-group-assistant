@@ -28,7 +28,7 @@
 | 同一时间只跑一轮 | 目录锁 `/tmp/qa-run_suite.lock`，已有一轮在跑就退出（`RUN_BUSY`），不排队撞车 |
 | 测试服中途换版 | 每个环境开跑前、跑完各取一次测试服版本，变了就标「作废，需重跑」，不算失败 |
 | 偶发失败 | 首跑有失败立即再跑一次，重跑通过的列为「偶发」，不算失败 |
-| 防刷用例 | 防刷开关关着时，开跑前在套件里临时停用 A01～A11，跑完按备份恢复（`aa_items.py`）；10:00 那轮自己打开开关（`anti_abuse_switch.py`）照常跑、跑完关回 |
+| 防刷用例 | A01～A11 在平台上设了执行条件 `antiAbuseSwitch == 1` 和「不重试」（`aa_platform.py setup`）；每轮开跑前把测试服开关值同步进环境变量（`aa_platform.py sync`），开关关着时平台记「跳过」；10:00 那轮自己打开开关（`anti_abuse_switch.py`）照常跑、跑完关回 |
 | 前置不足 | 账号 / 换剧准备失败直接 `PRECONDITION_BLOCKED` 退出，不计通过 |
 
 ## 三、失败怎么处理
@@ -49,7 +49,7 @@
 | `at/platform_p0.py` / `platform_p1.py` / … | 合同核对、生成并挂载平台用例 |
 | `at/p0_probe.py` / `p0_report.py` / `schema_diff.py` | 真实调用与逐字段比对、出清单 |
 | `at/env_tokens.py` / `series_check.py` / `topup.py` | 前置：登录写变量、换剧、补币 |
-| `at/anti_abuse_prep.py` / `anti_abuse_switch.py` / `aa_items.py` | 防刷前置、开关、临时停用用例 |
+| `at/anti_abuse_prep.py` / `anti_abuse_switch.py` / `aa_platform.py` | 防刷前置、开关、平台执行条件与变量同步（`aa_items.py` 为旧的临时停用办法，已不用） |
 | `at/post_round.py` | 回归结果发群 |
 | `at/jira.py` / `jira_watch.py` | 提缺陷、看评论 |
 | `send.sh` / `reply.sh` | 钉钉发消息 / 引用回复（成功后 `announce_sent.py` 通知本人并记操作台） |

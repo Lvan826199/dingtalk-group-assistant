@@ -6,10 +6,7 @@
 # launchd 不行：macOS 隐私保护不让后台任务读桌面目录（11-13 试过 Operation not permitted）。
 set -u
 QA="$(cd "$(dirname "$0")/../.." && pwd)"; AT="$QA/scripts/at"; DIR="$QA/runs/scheduled"; mkdir -p "$DIR"
-# 每天第一次运行（≥ 09:00）：把前一天的每日总结发到本人自己的私聊（用户 11-13 定）
-if [ "$(date +%H)" -ge 9 ] && [ ! -f "$DIR/$(date +%F)-morning.sent" ]; then
-  touch "$DIR/$(date +%F)-morning.sent"; python3 -I "$QA/scripts/morning_report.py" 2>&1 | tail -1
-fi
+# 早上补发前一天每日总结已停（11-24 本人：和 21:00 收尾汇报重复）
 h=$(date +%H); [ "$h" -ge 10 ] && [ "$h" -lt 21 ] && python3 -I "$AT/jira_watch.py" --once 2>&1 | grep -v "^$" | sed 's/^/[jira] /' | cut -c1-600
 cur() { curl -s -m 10 https://api-test.example.com/actuator/info | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["git"]["commit"]["id"][:7])' 2>/dev/null; }
 base=$(cur); end=$(( $(date +%s) + 29*60 )); stop=$(date -j -f "%H%M%S" 210000 +%s)

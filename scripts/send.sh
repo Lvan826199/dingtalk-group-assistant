@@ -12,7 +12,7 @@ TEXT=$(printf '%s' "$2" | python3 -I -c "import sys,re;print(re.sub(r'\n+', '\n\
 AT=(); [ -n "${3:-}" ] && AT=(--at-open-dingtalk-ids "$3")
 # dws v1.0.68 起正文参数是 --content、会话是 --conversation-id（11-18 升级）；发失败用机器人通知用户（send_failed.py）
 if [ -n "$EDIT" ]; then
-  OUT=$(dws chat message edit --conversation-id "$1" --msg-id "$EDIT" --content "$TEXT" ${AT[@]+"${AT[@]}"} 2>&1)
+  OUT=$(dws chat message edit --conversation-id "$1" --message-id "$EDIT" --text "$TEXT" ${AT[@]+"${AT[@]}"} 2>&1)
 else
   # 新入口要求正文同时包含 <@openDingTalkId> 占位符；只传 at flag 会返回成功但消息不产生真实 @。
   if [ -n "${3:-}" ]; then

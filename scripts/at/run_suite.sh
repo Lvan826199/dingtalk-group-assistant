@@ -34,15 +34,11 @@ fi
 AA_OPENED=0
 if [ "${AA_WINDOW:-0}" = 1 ] && python3 -I "$(dirname "$0")/anti_abuse_switch.py" status | grep -q "=0"; then
   python3 -I "$(dirname "$0")/anti_abuse_switch.py" on && AA_OPENED=1
-  CLEANUP="$CLEANUP"'; [ "$AA_OPENED" = 1 ] && python3 -I "$(dirname "$0")/anti_abuse_switch.py" off'
+  CLEANUP="$CLEANUP"'; [ "$AA_OPENED" = 1 ] && python3 -I "$(dirname "$0")/anti_abuse_switch.py" off; python3 -I "$(dirname "$0")/aa_platform.py" sync'
 fi
-# 开关关着（不是 10:00 窗口）时，A01～A11 必然失败且每条空等约 51 秒：开跑前在套件 72 里临时停用，结束时按备份恢复（11-23 本人同意）。
-# 必须放在这里：platform_p0 每次会重新挂载套件用例，把停用状态冲掉。
-AA_ITEMS_OFF=0
-if [ "$AA_OPENED" = 0 ] && python3 -I "$(dirname "$0")/anti_abuse_switch.py" status | grep -q "=0"; then
-  python3 -I "$(dirname "$0")/aa_items.py" off && AA_ITEMS_OFF=1
-  CLEANUP="$CLEANUP"'; [ "$AA_ITEMS_OFF" = 1 ] && python3 -I "$(dirname "$0")/aa_items.py" restore'
-fi
+# 防刷用例由平台自己判断（11-23 平台 d41cfbf0）：A01～A11 已设执行条件 antiAbuseSwitch == 1 + 不重试，
+# 开关关着时平台记「跳过」。这里只把开关当前值同步进各环境变量（aa_platform.py），不再临时停用用例。
+python3 -I "$(dirname "$0")/aa_platform.py" sync || echo "[run_suite] 防刷开关同步失败，防刷用例可能按旧值跑或跳过"
 for S in "${@:-72}"; do
   for env in ${ENVS:-163 164 165 166 168 169}; do
     # 前置条件 3（OPS-019 防刷，11-16 加）：套件 72 每个环境开跑前造一次性游客号刷到位，P1-防刷 用例断言后冻结清理；放在这里是因为「无播放 200 次」只封 1 小时
@@ -73,11 +69,11 @@ for S in "${@:-72}"; do
       done
       B1=$(build)
       OUT=$(curl -s -H "Authorization: Bearer $T" "$B/api-executions/$EID/logs" | python3 -I -c "
-import json,sys;L=json.load(sys.stdin)['data']['logs'];f=[l for l in L if 'passed' not in l['message'][-8:]]
+import json,sys;L=json.load(sys.stdin)['data']['logs'];sk=[l for l in L if 'skipped' in l['message'][-12:]];f=[l for l in L if 'passed' not in l['message'][-8:] and l not in sk]
 import re
 skip=[l for l in f if '${AA_SKIP:-0}'=='1' and re.match(r'A(0\\d|1[01]) ', l['message'][7:])]
 f=[l for l in f if l not in skip]; n=len(L)-len(skip)
-print('suite $S env $env exec $EID $s', n-len(f), '/', n, ('（防刷 %d 条因开关关闭跳过，不计入）' % len(skip)) if skip else '')
+n-=len(sk); print('suite $S env $env exec $EID $s', n-len(f), '/', n, ('（跳过 %d 条，不计入）' % (len(skip)+len(sk))) if (skip or sk) else '')
 [print('   ', l['message'][7:220]) for l in f]")
 
       if [ -n "$B0" ] && [ -n "$B1" ] && [ "$B0" != "$B1" ]; then
