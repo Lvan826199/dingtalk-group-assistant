@@ -103,6 +103,10 @@ CASES = [  # (flow, name, priority, case_type, desc, preconditions, request)
      step("sign bad", "/api/v1/member/sign", body(cate=1, openId="at-probe", openToken="at-bad-token", tracking="enabled", fullName=""), asserts=code_assert(10101))),  # sign 要带已登录的 uid/token（@VerifyToken），不带是 10402
     (T, "T01b sign 不带 token → 10402", "low", "exception", "@VerifyToken。", [],
      step("sign no token", "/api/v1/member/sign", body(drop=("token",), cate=1, openId="at-probe", openToken="at-bad-token", tracking="enabled", fullName=""), asserts=code_assert(10402))),
+    (T, "T01c sign 1.1.2 Limited Login 缺 nonce → 10101", "medium", "exception",
+     "TR-SERVER-2026-003（合同 5a9dfe1e）：App 1.1.2 起 Limited Login 必带 nonce，没过回 10101 provider verification failed。"
+     "测试服没有真 FB 令牌，假令牌本身也回 10101，所以这条只守「缺 nonce 不报 500、码不变」，nonce 一致 / 重放要客户端真机验。", [],
+     step("sign no nonce", "/api/v1/member/sign", body(appVersion="1.1.2", cate=1, openId="at-probe", openToken="at-bad-token", tracking="limited", fullName=""), asserts=code_assert(10101))),
     (T, "T02 unbind 未绑定 → 10101 provider not bound", "medium", "exception", "固定号没绑第三方。", [],
      step("unbind", "/api/v1/member/unbind", body(cate=1), asserts=code_assert(10101))),
     (T, "T03 unbind 不带 token → 10402", "low", "exception", "@VerifyToken。", [],

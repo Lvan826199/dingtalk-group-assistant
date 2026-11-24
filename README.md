@@ -49,7 +49,7 @@
 | `at/platform_p0.py` / `platform_p1.py` / … | 合同核对、生成并挂载平台用例 |
 | `at/p0_probe.py` / `p0_report.py` / `schema_diff.py` | 真实调用与逐字段比对、出清单 |
 | `at/env_tokens.py` / `series_check.py` / `topup.py` | 前置：登录写变量、换剧、补币 |
-| `at/anti_abuse_prep.py` / `anti_abuse_switch.py` / `aa_platform.py` | 防刷前置、开关、平台执行条件与变量同步（`aa_items.py` 为旧的临时停用办法，已不用） |
+| `at/anti_abuse_prep.py` / `anti_abuse_switch.py` / `aa_platform.py` | 防刷前置、开关、平台执行条件与变量同步 |
 | `at/post_round.py` | 回归结果发群 |
 | `at/jira.py` / `jira_watch.py` | 提缺陷、看评论 |
 | `send.sh` / `reply.sh` | 钉钉发消息 / 引用回复（成功后 `announce_sent.py` 通知本人并记操作台） |
@@ -65,6 +65,6 @@
 | `~/.config/jira/account.json` | Jira 账号 |
 | `~/.config/qa-workflow/people.json` | `{"姓名": "钉钉 openDingtalkId"}`，发群 @ 用 |
 | `~/.config/qa-workflow/reco_at_ids.json` | 推荐侧回归要 @ 的人（JSON 数组） |
-| 环境变量 `QA_TEST_GROUP` / `QA_COORD_GROUP` / `QA_NOTIFY_GROUP` | 测试群 / 协调群 / 调试通知群的会话 ID |
+| 环境变量 `QA_TEST_GROUP` / `QA_COORD_GROUP` / `QA_NOTIFY_GROUP` / `QA_DEPT_GROUP` | 测试群 / 协调群 / 调试通知群 / 部门群的会话 ID |
 
 脚本里写死的平台地址、项目号（903）、套件号（72）和环境号（163～169）按自己的平台改。

@@ -187,7 +187,7 @@ def main():
     probe("/api/go/remix/characters", {"seriesId": series}, case="回归剧不在二创名单 → 15107", expect=15107)
     probe("/api/go/remix/eligibility", {"seriesId": REMIX_SERIES}, case="二创开放剧 canCreate=true")
     probe("/api/go/remix/characters", {"seriesId": REMIX_SERIES}, case="二创开放剧正向（11-12 实际 15107，疑问已问研发C）")
-    probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 2}, case="二创开放剧正向（11-12 实际 15107）")
+    probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 2}, case="缺 media → 10101（合同 media 必填，11-24 改）", expect=10101)
     probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 2, "media": 1}, case="media=1（11-12 实际 15107）")
     probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 1}, case="characterCount=1 → 10101 templates parameters INVALID（疑问）", expect=10101)
     probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 2, "media": 0}, case="media=0 → 10101", expect=10101)

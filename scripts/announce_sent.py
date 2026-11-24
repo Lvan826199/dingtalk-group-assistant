@@ -8,7 +8,7 @@ import notify_user
 cid, text = sys.argv[1], sys.argv[2]
 who = sys.argv[3] if len(sys.argv) > 3 else ""
 quoted = sys.argv[4] if len(sys.argv) > 4 else ""
-KNOWN = {os.environ.get("QA_TEST_GROUP", ""): "测试群", os.environ.get("QA_COORD_GROUP", ""): "协调群"}
+KNOWN = {os.environ.get("QA_TEST_GROUP", ""): "测试群", os.environ.get("QA_COORD_GROUP", ""): "协调群", os.environ.get("QA_DEPT_GROUP", ""): "测试部群"}
 try:
     name = KNOWN.get(cid) or json.loads(subprocess.run(["dws", "chat", "group", "info", "--conversation-id", cid, "--format", "json"],
                                      capture_output=True, text=True, timeout=20).stdout).get("title") or cid
@@ -44,4 +44,6 @@ if quoted:
                                    headers={"Content-Type": "application/json"}), timeout=20).read()
     except Exception:
         pass
+if cid == os.environ.get("QA_NOTIFY_GROUP", ""):   # 在调试群里直接回本人的话，群里已经看得到，不再补一张「已自动回复」（11-24 本人：回了两遍）
+    sys.exit(0)
 notify_user.send("💬 已自动回复" + (" " + " ".join(nos) if nos else ""), ("" if name.startswith("私聊：") else "群：") + name + "\n时间：" + at + "\n\n" + text, at_me=False)
