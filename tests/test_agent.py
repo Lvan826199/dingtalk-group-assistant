@@ -1,6 +1,6 @@
 """群消息助手回归测试：每个用例对应一条真实踩过的坑或定下的规则（见 CHANGELOG）。钉钉、AI 都用替身，不碰真实账号。
 运行：python -m pytest -q tests"""
-import json, os, subprocess, sys, time
+import importlib.util, json, os, re, subprocess, sys, time
 
 import pytest
 
@@ -534,3 +534,13 @@ def test_extra_send_requirements_failure_keeps_draft_and_notifies(make_agent):
 def test_jira_issue_number_creates_a_durable_task_key(make_agent):
     a, _, _ = make_agent()
     assert a.task_key(msg("TICKET-845 交易历史验证")) == "jira:845"
+
+
+def test_no_for_date_sequence(make_agent):
+    a, _, _ = make_agent({})
+    real = importlib.util.spec_from_file_location("agent_real_no", a.__file__)
+    m = importlib.util.module_from_spec(real); real.loader.exec_module(m)
+    day = m.time.strftime("%m%d")
+    assert m.no_for("msgA") == f"#{day}-1" and m.no_for("msgB") == f"#{day}-2"
+    assert m.no_for("msgA") == f"#{day}-1"                       # 同一条消息永远同一个号
+    assert re.findall(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})", f"#{day}-12 已处理 #ABCDE") == [f"#{day}-12", "#ABCDE"]

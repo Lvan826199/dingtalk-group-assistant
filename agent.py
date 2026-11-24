@@ -34,7 +34,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.3 2026-11-24"
+VERSION = "v3.3.1 2026-11-24"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -577,7 +577,7 @@ def record_notification(value):
            "recorded": time.time(), "group": value.get("group") or (event_group(event) if event.get("conversation_id") else str(CFG.get("notify_group_name") or "专属机器人提醒群")),
            "message_id": value.get("owner_message_id") or event.get("message_id") or "",
            "task_key": task_key(event), "source": str(value.get("source") or "assistant"),
-           "related_nos": re.findall(r"#[A-Za-z0-9]{3,8}", title)}
+           "related_nos": re.findall(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})", title)}
     with NOTIFICATION_LOCK:
         if NOTIFICATION_IDS is None:
             NOTIFICATION_IDS = {x.get("notification_id") for x in notification_snapshot(5000)}
@@ -748,6 +748,30 @@ def setup_notify(wait_minutes=15, group="", webhook="", secret=""):
     print("机器人已配置，自检", "成功" if ok else "失败（核对是否勾了「加签」、地址是否完整）"); return ok
 
 
+NO_MAP_PATH = os.path.join(HOME, "logs", "no_map.json")   # 消息 ID → 编号
+NO_LOCK = threading.Lock()
+
+
+def no_for(message_id):
+    """编号按日期排（11-24 梦无矶：#MgqYA 这种难认）：当天第 3 件就是 #1124-3。同一条消息永远同一个号，
+    映射存 logs/no_map.json；以前的五位编号照样能用。"""
+    if not message_id:
+        return "#"
+    with NO_LOCK:
+        try:
+            m = json.load(open(NO_MAP_PATH, encoding="utf-8"))
+        except (OSError, ValueError):
+            m = {}
+        if message_id not in m:
+            day = time.strftime("%m%d")
+            m[message_id] = f"#{day}-{sum(1 for v in m.values() if v.startswith('#' + day + '-')) + 1}"
+            if len(m) > 5000:
+                m = dict(list(m.items())[-4000:])
+            os.makedirs(os.path.dirname(NO_MAP_PATH), exist_ok=True)
+            json.dump(m, open(NO_MAP_PATH, "w", encoding="utf-8"), ensure_ascii=False)
+        return m[message_id]
+
+
 OPEN_PATH = os.path.join(HOME, "logs", "open.json")      # 还没处理完的事：{编号: {...}}
 COMMITMENTS_PATH = os.path.join(HOME, "logs", "commitments.json")
 EXECUTION_LOCK = threading.Lock()
@@ -838,7 +862,7 @@ def _open_save(d):
 
 def open_add(e, kind, why):
     """交给本人 / 草稿待确认 → 记一个编号（本地 open.json），机器人消息里带上，处理完再发一条「已处理」。"""
-    no = "#" + re.sub(r"[^A-Za-z0-9]", "", e.get("message_id", ""))[-5:]
+    no = no_for(e.get("message_id", ""))
     d = _open_load()
     key = task_key(e)
     existing = d.get(no)
@@ -1220,7 +1244,7 @@ def verification_requested(question):
 def ask_ai(no, question):
     """「#编号 问：……」：带着原消息、草稿、依据、记忆去问 AI；AI 可以给答复，也可以按要求改草稿。只回提醒群，不往原会话发任何东西。"""
     raw = str((getattr(JOB_CONTEXT, "event", None) or {}).get("content") or "")
-    if handled_elsewhere(raw) and not re.search(r"#[A-Za-z0-9]{3,8}\s*(?:问|请问|问一下)[：:]", raw):
+    if handled_elsewhere(raw) and not re.search(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})\s*(?:问|请问|问一下)[：:]", raw):
         # 另有值守：本人只是引用卡片说话（没写「#编号 问：」），由值守回答，助手不再重复作答（11-23 #yf2Dw 回了两遍）
         status_event("交给其他值守，不作答", f"{no}：{question}"); return
     x = _open_load().get(no)
@@ -1386,7 +1410,7 @@ def quoted_action_nos(quoted):
         formal = (re.match(r"^\*?\*?任务\s*[：:]", line)
                   or (line == lines[0] and re.search(r"草稿|待你确认|建议回复|AI\s*的回答|追问答复|需要你处理", line)))
         if formal:
-            return list(dict.fromkeys(re.findall(r"#[A-Za-z0-9]{3,8}", line)))
+            return list(dict.fromkeys(re.findall(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})", line)))
     return []
 
 
@@ -1394,10 +1418,10 @@ def command_text(e):
     """确认可以只引用机器人消息；正文显式编号优先，引用多事项时不猜。"""
     text = re.sub(r'^(?:<@[^>]+>|@[^\s]+)\s*', '', str(e.get("content") or "").strip()).strip()
     # 口语说法当「不归我」（11-23：本人引用提醒回「和我无关，无需回复」，被当成追问，没关掉这件事）
-    m = re.match(r"^(#[A-Za-z0-9]{3,8}\s*)?((?:和我|与我)无关|不关我的?事|无需回复|不用回复?|不需要回复?|不用管|不是我的事?)(.*)$", text, re.S)
+    m = re.match(r"^(#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})\s*)?((?:和我|与我)无关|不关我的?事|无需回复|不用回复?|不需要回复?|不用管|不是我的事?)(.*)$", text, re.S)
     if m:
         text = (m.group(1) or "") + "不归我：" + (m.group(2) + m.group(3)).strip()
-    if re.search(r"#[A-Za-z0-9]{3,8}", text):
+    if re.search(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})", text):
         return text
     if not re.match(r"(?:(?:全部(?:可以)?发送|可以(?:发送|发)?|发送|发出|发吧|发|不发|不归我|手动已处理|已处理|处理了|处理完了)(?=$|[\s，,。！!：:])|(?:改成|暂存|问)[：:])", text):
         return text
@@ -1450,7 +1474,7 @@ def command(e):
         threading.Thread(target=perform_update, daemon=True).start(); return
     if re.fullmatch(r"(一键)?清空(待回复)?", text):
         n, k = clear_all(); notify("🧹 待回复已清空", f"清掉 {n} 件没处理完的事、{k} 份草稿，都没有发出。"); return
-    m = re.match(r"(#[A-Za-z0-9]{3,8})\s*不归我(?:[：:]\s*(.*))?$", text, re.S)
+    m = re.match(r"(#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8}))\s*不归我(?:[：:]\s*(.*))?$", text, re.S)
     if m:
         f, _ = draft_by_no(m.group(1))
         note = (m.group(2) or "").strip() or "别人之间的对话，不属于我的职责"
@@ -1458,7 +1482,7 @@ def command(e):
         if f and os.path.exists(f):
             os.remove(f)
         return
-    m = re.match(r"(#[A-Za-z0-9]{3,8})\s*(?:手动已处理|已处理|处理了|处理完了)(?:[：:]\s*(.*))?$", text, re.S)   # 钉钉里说「#编号 已处理」也行（11-23）
+    m = re.match(r"(#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8}))\s*(?:手动已处理|已处理|处理了|处理完了)(?:[：:]\s*(.*))?$", text, re.S)   # 钉钉里说「#编号 已处理」也行（11-23）
     if m:
         f, _ = draft_by_no(m.group(1))
         note = (m.group(2) or "").strip() or "已由本人线下处理"
@@ -1466,16 +1490,16 @@ def command(e):
         if f and os.path.exists(f):
             os.remove(f)
         return
-    m = re.match(r"(#[A-Za-z0-9]{3,8})\s*(?:问|请问|问一下)[：:]\s*(.+)", text, re.S)
+    m = re.match(r"(#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8}))\s*(?:问|请问|问一下)[：:]\s*(.+)", text, re.S)
     if m:
         ask_ai(m.group(1), m.group(2).strip()); return
-    m = re.match(r"(#[A-Za-z0-9]{3,8})\s*暂存[：:]\s*(.+)", text, re.S)
+    m = re.match(r"(#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8}))\s*暂存[：:]\s*(.+)", text, re.S)
     if m:
         stash(m.group(1), m.group(2).strip()); return
     if re.search(r"全部(可以)?发(送)?", text):
         nos = [json.load(open(f, encoding="utf-8")).get("todo") for f in glob.glob(os.path.join(HOME, "drafts", "*.json"))]
     else:
-        nos = ["#" + x for x in re.findall(r"#([A-Za-z0-9]{3,8})", text)]
+        nos = ["#" + x for x in re.findall(r"#(\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})", text)]
     if not nos:
         # 本人自然语言追问也要有回执；不能因为不是固定口令就静默丢掉。
         quote = e.get("quoted_message") or e.get("quotedMessage") or {}
@@ -1486,7 +1510,7 @@ def command(e):
         elif not re.fullmatch(r"(?:收到|好|好的|嗯|谢谢)[。！!]?", text):
             answer_user(e, text)
         return
-    action_text = re.sub(r"#[A-Za-z0-9]{3,8}", "", text).strip()
+    action_text = re.sub(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})", "", text).strip()
     if not re.match(r"(?:改成[：:]|(?:全部(?:可以)?发送|可以(?:发送|发)?|发送|发出|发吧|发|不发|删除|作废|算了)(?=$|[\s，,。！!]))", action_text):
         answer_user(e, text)
         return
@@ -1505,7 +1529,7 @@ def command(e):
             if os.path.exists(f): os.remove(f)
         elif m or re.search(r"可以|发送|发出|发吧|^发", text):
             try:
-                extra = re.sub(r"#[A-Za-z0-9]{3,8}|可以发送|可以发|可以|发送|发出|发吧|^发", "", text).strip(" ，,。.;；：:")
+                extra = re.sub(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})|可以发送|可以发|可以|发送|发出|发吧|^发", "", text).strip(" ，,。.;；：:")
                 if extra and not m:
                     d["draft"], d["at_ids"] = confirmed_send_options(d, extra)
                     json.dump(d, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1)

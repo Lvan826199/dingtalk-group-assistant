@@ -496,7 +496,7 @@ def act(no, action, text=""):
 
 def _act(no, action, text=""):
     """页面按钮 → 提醒群同款指令，交给 agent.command（发出、留痕、提醒群「已处理」都走原逻辑）。"""
-    if not re.fullmatch(r"#[A-Za-z0-9]{3,8}", no or ""):
+    if not re.fullmatch(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})", no or ""):
         return "编号不对"
     if no not in A["_open_load"]() and not A["draft_by_no"](no)[0]:
         return "这条消息已处理，请查看已处理记录"
@@ -627,7 +627,7 @@ class H(BaseHTTPRequestHandler):
             reason = str(body.get("reason") or "需要本人拍板")[:1000]
             if not message_id or not event.get("conversation_id"):
                 return self._send(400, '{"msg":"缺少 message_id 或 conversation_id"}')
-            no_hint = "#" + re.sub(r"[^A-Za-z0-9]", "", message_id)[-5:]
+            no_hint = A["no_for"](message_id)
             restored = _message_context(no_hint, {"cid": event["conversation_id"], "event": event})["item"]
             event = restored["event"]
             items = A["_open_load"]()

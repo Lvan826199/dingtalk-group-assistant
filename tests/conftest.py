@@ -1,3 +1,4 @@
+import re
 """测试夹具：在临时目录里放一份 agent.py + 配置，按需加载成一个全新的模块；钉钉 / AI 命令全部替身，不碰真实账号。"""
 import importlib.util, json, os, shutil, sys, uuid
 import pytest
@@ -29,6 +30,8 @@ def make_agent(tmp_path, monkeypatch):
         a = importlib.util.module_from_spec(spec); sys.modules[name] = a; spec.loader.exec_module(a)
         notes, calls = [], []
         a.notify = lambda t, x: notes.append((t, x)) or True
+        # 老用例按消息 ID 末五位写死编号（mABCDE → #ABCDE）；日期编号本身另有用例（test_no_for_date_sequence）
+        a.no_for = lambda mid: "#" + re.sub(r"[^A-Za-z0-9]", "", mid or "")[-5:]
         if fake_run:
             a.run = lambda args, **k: calls.append(args) or R(0, '{"success": true}')
         return a, notes, calls
