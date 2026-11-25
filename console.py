@@ -647,10 +647,10 @@ class H(BaseHTTPRequestHandler):
             brief = f"{event.get('sender', '未知发送人')}：{str(event.get('content') or '')[:240]}"
             A["notify"](f"🔔 {no} 需要你处理", f"{brief}\n原因：{reason}\n原消息 ID：{message_id}\n请在操作台或原会话完成决定。", True)
             return self._send(200, json.dumps({"ok": True, "no": no}, ensure_ascii=False))
+        if path == "/api/say":                       # 3.4：以前排在 404 判断后面，聊天框发出去一直没反应
+            return self._send(200, json.dumps({"msg": say(body.get("text", ""))}, ensure_ascii=False))
         if path != "/api/act":
             return self._send(404, "{}")
-        if urllib.parse.urlparse(self.path).path == "/api/say":
-            return self._send(200, json.dumps({"msg": say(body.get("text", ""))}, ensure_ascii=False))
         no, action, text = body.get("no"), body.get("action"), body.get("text", "")
         if action == "ask":                          # 问 AI 要几十秒，后台跑，答案回来后卡片自动更新
             threading.Thread(target=act, args=(no, action, text), daemon=True).start()
@@ -889,7 +889,7 @@ b.innerHTML=rows.map(r=>r.me?`<div class="cmsg me"><div class="b"><div class="w"
 :`<div class="cmsg"><div class="b"><div class="w">机器人 · ${esc(r.time)}${r.delivered===false?' · 钉钉没送达':''}</div><div class="tt">${readable(r.title)}</div><div class="readable">${readable(r.text)}</div></div></div>`).join('')||'<div class="empty">还没有对话</div>';if(atEnd)b.scrollTop=1e9}
 function openChat(){$('chatPanel').classList.add('on');$('mask').classList.add('on');if(!$('chatBody').querySelector('.cmsg'))$('chatBody').innerHTML=loading('正在读取调试群对话…');loadChat().then(()=>{$('chatBody').scrollTop=1e9;$('chatInput').focus()})}
 function closeChat(){$('chatPanel').classList.remove('on');$('mask').classList.remove('on')}
-async function sendChat(){const t=$('chatInput').value.trim();if(!t)return;$('chatInput').value='';const r=await api('/api/say',{text:t});toast(r.msg);setTimeout(loadChat,3000)}
+async function sendChat(){const t=$('chatInput').value.trim();if(!t)return;$('chatInput').value='';let r=null;try{r=await api('/api/say',{text:t})}catch(e){}if(!r||!r.msg){$('chatInput').value=t;return toast('没发出去，内容已放回输入框')}toast(r.msg);setTimeout(loadChat,3000)}
 // 顶栏「值守中」点开：按群看最近消息（复用右侧面板）
 let hsel=null;async function openH(cid){sel=null;const request=++panelRequest;$('panel').classList.add('on');$('mask').classList.add('on');$('ptitle').textContent='最近消息';$('psub').textContent='正在读取监听的群…';$('pbody').innerHTML=loading('正在读取监听的群和最近消息，第一次打开要几秒…');$('pfoot').innerHTML='';const gs=await api('/api/groups');if(request!==panelRequest)return;if(!gs.length)return toast('没有监听的群');hsel=cid||hsel||gs[0].cid;
 $('pav').outerHTML='<span class="av" id="pav" style="background:var(--green)">群</span>';$('ptitle').textContent='最近消息';$('psub').textContent='按群看，每个群最近 30 条';

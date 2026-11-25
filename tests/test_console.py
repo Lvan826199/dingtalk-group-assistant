@@ -278,3 +278,28 @@ def test_reply_before_item_exists_still_blocks_late_draft(make_agent, monkeypatc
     a.close_by_conversation("cidZ", {"quotedMessage": {"message_id": "msgEARLY1"}, "message_id": "r1"})
     a.REPLIED.clear()                      # 模拟重启：内存清空，应从磁盘恢复
     assert a.already_replied({"message_id": "msgEARLY1"})
+
+
+def test_receipt_says_duty_offline_without_flag(make_agent, monkeypatch):
+    import os, time
+    a, console, notes, calls, *_ = _boot(make_agent)
+    a.CFG["handled_elsewhere"] = r"^(批准|同意)"
+    monkeypatch.setattr(a, "ai_exec", lambda *x, **k: '{"answer":"未执行"}')
+    flag = os.path.join(a.HOME, "logs", "duty_on")
+    os.makedirs(os.path.dirname(flag), exist_ok=True)
+    if os.path.exists(flag):
+        os.remove(flag)
+    a.enqueue_owner_command({"sender": "本人", "content": "批准发布", "conversation_id": "cidN", "message_id": "msgOFF1"})
+    for _ in range(50):                      # 回执在后台线程里发，等第一条发完再上岗
+        if any("已收到你的消息" in t for t, _ in notes):
+            break
+        time.sleep(0.05)
+    open(flag, "w").close()
+    a.enqueue_owner_command({"sender": "本人", "content": "批准上线", "conversation_id": "cidN", "message_id": "msgON1"})
+    for _ in range(50):
+        if sum("已收到你的消息" in t for t, _ in notes) >= 2:
+            break
+        time.sleep(0.05)
+    states = [x for t, x in notes if "已收到你的消息" in t]
+    assert any("批准发布" in x and "不在岗" in x for x in states)
+    assert any("批准上线" in x and "交给值守处理" in x for x in states)

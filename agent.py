@@ -14,7 +14,7 @@ v2.6（梦无矶 11-18）：回复更短、分行（每条 1～3 行，几件事
   按群开关自动回复（梦无矶 11-18 定）：新部署群聊默认只提醒、不回复；从旧版升上来不改原设置，启动时在提醒群问本人「保持现状 / 全部只提醒」；提醒群发「<群名> 自动回复」再回「确认开启 <群名>」二次确认后才开；
   「<群名> 只提醒」立即关；「群列表」看状态。写回 config.json，不用重启。表情也默认关，本人自己发「表情 开」才开。
   每人不用配置：python agent.py stickers 下载索引到 memory\表情包.json（部署时 Codex 跑）；提醒群「表情包」看张数，「删表情包 名字」拉黑。
-v2.5.1：不确定是不是归本人的事，群里一个字都不回，只在提醒群问本人「是否归你」；「收到，我确认一下再回复」只在明确 @ 本人、且确定归本人时才回。
+v2.5：不确定是不是归本人的事，群里一个字都不回，只在提醒群问本人「是否归你」；「收到，我确认一下再回复」只在明确 @ 本人、且确定归本人时才回。
 v2.5（一位同事试用后提议）：提醒群「待回复」看全部没处理完的事（含暂存草稿）；「清空」一键清掉待回复；「#编号 暂存：…」只存草稿不发，之后「#编号 可以发送」再发。
 v2.4：部署先明确职责范围（协作库读取 → 本人补充 → 本人确认）并确认通知 / 自动回复规则；没确认前只写草稿；派活、要负责、要排期、要承诺、超出职责范围的一律交给本人，绝不替本人接。
 v2.3：自动回复后在提醒群发「💬 已自动回复」；草稿发到提醒群，监听本人在提醒群里的回复：「#编号 可以发送」发出、「#编号 不发」作废、「#编号 改成：…」按改后的发出。
@@ -34,7 +34,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.3.1 2026-11-24"
+VERSION = "v3.4 2026-11-25"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -103,7 +103,7 @@ DWS, GIT, NODE = which("dws"), which("git"), which("node")
 # ---- 判断用的 AI（v2.7：不限 Codex）。使用者自己选、自己装；config 里 "ai" 指定，不指定就用本机装了的第一个。
 # 都用只读 / 计划模式跑一次就退出；prompt 长的走 stdin（Windows 命令行长度有限）。参数以本机 --help 为准，对不上用 ai_cmd 自定义。
 AI_PRESETS = {
-    "codex": {"name": "Codex", "bin": "codex", "args": ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--output-last-message", "{out}"], "prompt": "arg", "model": ["-m"]},
+    "codex": {"name": "Codex", "bin": "codex", "args": ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--output-last-message", "{out}", "-"], "prompt": "stdin", "model": ["-m"]},   # 3.4：改走 stdin，Windows 的 codex.cmd 会在换行处截断、超 8191 字直接失败
     "claude": {"name": "Claude Code", "bin": "claude", "args": ["-p", "--permission-mode", "plan", "--output-format", "text"], "prompt": "stdin", "model": ["--model"]},
     "codebuddy": {"name": "WorkBuddy / CodeBuddy", "bin": "codebuddy", "args": ["-p", "--output-format", "text"], "prompt": "stdin", "model": ["--model"]},
     "qoder": {"name": "Qoder", "bin": "qodercli", "args": ["-p", "-o", "text"], "prompt": "stdin", "model": ["--model"]},
@@ -225,6 +225,21 @@ import ssl
 SSLCTX = ssl.create_default_context(cafile="/etc/ssl/cert.pem") if os.path.exists("/etc/ssl/cert.pem") and os.name != "nt" else ssl.create_default_context()
 
 
+def save_json(path, obj, **kw):
+    """先写临时文件再替换（3.4）：直接 open(path, "w") 会先清空，别的线程这时读到空文件、或中途崩溃，待处理事项就全丢了。"""
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, **kw)
+    for _ in range(20):                      # Windows 上别的线程正开着读时替换会报 PermissionError，稍等再试
+        try:
+            os.replace(tmp, path); return
+        except PermissionError:
+            time.sleep(0.05)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, **kw)
+    os.remove(tmp)
+
+
 def run(args, **kw):
     """找不到命令（没装 dws / codex 等）时不崩，返回 127，由调用方当失败处理（v2.7，Linux 实测发现自检直接崩）。"""
     p = None
@@ -241,6 +256,8 @@ def run(args, **kw):
         return subprocess.CompletedProcess(args, p.returncode, stdout, stderr)
     except FileNotFoundError as ex:
         return subprocess.CompletedProcess(args, 127, "", f"找不到命令：{args[0]}（{ex}）")
+    except OSError as ex:                                                  # 例如 Windows 命令行过长 WinError 206：当失败处理，让备用 AI 接上（3.4）
+        return subprocess.CompletedProcess(args, 126, "", f"启动失败：{args[0]}（{ex}）")
     except subprocess.TimeoutExpired:
         # Node包装器超时只杀父进程会遗留Codex和工具，还可能一直等子进程关闭管道。
         if os.name == "nt":
@@ -675,6 +692,18 @@ def _mention_values(value):
     elif isinstance(value, (str, int)):
         yield str(value)
 
+def unknown_at_may_be_me(e):
+    """正文里的 <@id> 有没有可能是本人。配了本人 open_dingtalk_id 且这些 id 都是同一格式、都不是本人时，确定是 @ 别人（11-24：客户端提测 @一位同事 仍来找本人）。"""
+    tokens = set(re.findall(r"<@([^>]+)>", event_text(e)))
+    if not tokens:
+        return False
+    mine = str(CFG.get("open_dingtalk_id") or "").strip()
+    shape = r"D[A-Za-z0-9+/=]{20,}"
+    if not mine or not re.fullmatch(shape, mine):
+        return True
+    return mine in tokens or not all(re.fullmatch(shape, t) for t in tokens)
+
+
 def event_mentions_me(e):
     """识别本人姓名、引用正文和钉钉 mention 元数据；不把未知的 <@id> 当成别人。"""
     e = e or {}
@@ -768,13 +797,13 @@ def no_for(message_id):
             if len(m) > 5000:
                 m = dict(list(m.items())[-4000:])
             os.makedirs(os.path.dirname(NO_MAP_PATH), exist_ok=True)
-            json.dump(m, open(NO_MAP_PATH, "w", encoding="utf-8"), ensure_ascii=False)
+            save_json(NO_MAP_PATH, m, ensure_ascii=False)
         return m[message_id]
 
 
 OPEN_PATH = os.path.join(HOME, "logs", "open.json")      # 还没处理完的事：{编号: {...}}
 COMMITMENTS_PATH = os.path.join(HOME, "logs", "commitments.json")
-EXECUTION_LOCK = threading.Lock()
+EXECUTION_LOCK = threading.RLock()
 COMMITMENT_LOCK = threading.RLock()
 
 
@@ -784,6 +813,9 @@ def _text_for_task(e):
     """用于事项归并的可核对文本；只取消息正文和引用正文，不把凭据带入记录。"""
     q = e.get("quoted_message") or {}
     return " ".join(str(x or "") for x in (e.get("content"), q.get("content"), q.get("text")))
+
+
+NOT_TICKET = {"UTF", "ISO", "GB", "SHA", "MD", "TLS", "SSL", "HTTP", "HTTPS", "IPV", "API", "SDK", "GPT", "RFC", "CVE", "ES", "IOS", "UI", "QA", "TOP", "NO", "P"}
 
 
 def task_key(e):
@@ -798,8 +830,11 @@ def task_key(e):
                         (r"\b[A-Z][A-Z0-9_]*-\d+(?![\w-])", "jira"),
                         (r"(?:评论|comment)\s*[#：:]?\s*(\d+)\b", "comment"),
                         (r"\bJira\s*[#：:]?\s*(\d+)\b", "jira")):
-        for m in re.findall(pat, text, flags=re.I):
+        # 3.4：项目前缀区分大小写、至少两个字母，排除 UTF-8、Android-14 这类不是单号的写法（以前忽略大小写，会把不相干的事并成一条）
+        for m in re.findall(pat, text, flags=0 if pat.startswith(r"\b[A-Z]") else re.I):
             if prefix == "jira" and re.fullmatch(r"[A-Z][A-Z0-9]*-\d{4}-\d{3,}", m, re.I):
+                continue
+            if prefix == "jira" and "-" in m and (not re.match(r"[A-Z]{2}", m) or m.split("-")[0] in NOT_TICKET):
                 continue
             # 只保留稳定编号，忽略“Jira / 评论”等中文上下文，保证跨群写法一致。
             if prefix == "issue":
@@ -857,7 +892,7 @@ def _open_load():
 
 def _open_save(d):
     with LOCK:
-        json.dump(d, open(OPEN_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        save_json(OPEN_PATH, d, ensure_ascii=False, indent=1)
 
 
 def open_add(e, kind, why):
@@ -983,7 +1018,7 @@ def mark_replied(mid):
     REPLIED.clear(); REPLIED.update(keep)
     try:
         os.makedirs(os.path.dirname(_replied_path()), exist_ok=True)
-        json.dump(keep, open(_replied_path(), "w", encoding="utf-8"))
+        save_json(_replied_path(), keep)
     except OSError:
         pass
 
@@ -1041,7 +1076,7 @@ def build_stickers():
         name = os.path.splitext(p.split("/")[-1])[0].split("-", 1)[-1]
         if re.search(r"[一-鿿]{2,}", name) and not re.search(BQB_BAD, name) and name not in black and name not in lib:
             lib[name] = BQB_CDN + urllib.parse.quote(p)
-    json.dump(lib, open(STICKERS, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
+    save_json(STICKERS, lib, ensure_ascii=False, indent=0)
     return len(lib)
 
 
@@ -1054,7 +1089,7 @@ def save_cfg(key, value):
     CFG[key] = value
     with LOCK:
         c = json.load(open(CFG_PATH, encoding="utf-8")); c[key] = value
-        json.dump(c, open(CFG_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        save_json(CFG_PATH, c, ensure_ascii=False, indent=1)
 
 
 PENDING_ON = {}   # 等二次确认开自动回复的群：cid → 时间
@@ -1124,8 +1159,8 @@ def sticker_command(text):
         bl = STICKERS + ".blacklist"
         black = json.load(open(bl, encoding="utf-8")) if os.path.exists(bl) else []
         with LOCK:
-            json.dump(lib, open(STICKERS, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
-            json.dump(sorted(set(black + [m.group(2)])), open(bl, "w", encoding="utf-8"), ensure_ascii=False)
+            save_json(STICKERS, lib, ensure_ascii=False, indent=0)
+            save_json(bl, sorted(set(black + [m.group(2)])), ensure_ascii=False)
         notify("🗑 表情包", f"「{m.group(2)}」" + ("已删除，以后不会再用" if gone else "不在库里（已记黑名单）")); return True
     return False
 
@@ -1188,7 +1223,10 @@ def todo_text():
 
 def draft_by_no(no):
     for f in glob.glob(os.path.join(HOME, "drafts", "*.json")):
-        d = json.load(open(f, encoding="utf-8"))
+        try:
+            d = json.load(open(f, encoding="utf-8"))
+        except (OSError, ValueError):                                      # 一份坏草稿不该让所有「#编号」指令都失败（3.4）
+            log("草稿读不了，跳过", os.path.basename(f)); continue
         if d.get("todo") == no:
             return f, d
     return None, None
@@ -1198,14 +1236,14 @@ def stash(no, text):
     """「#编号 暂存：内容」：只存草稿不发。已有草稿就改内容；交给本人的事（没有草稿）就新建一份草稿挂在这个编号上。"""
     f, d = draft_by_no(no)
     if f:
-        d["draft"] = text; json.dump(d, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        d["draft"] = text; save_json(f, d, ensure_ascii=False, indent=1)
     else:
         x = _open_load().get(no)
         if not x or not x.get("event"):
             notify(f"❓ 没找到 {no}", "可能已经处理过；在提醒群发「待回复」看还有哪些。"); return
         name = save_draft(x["event"], text)
         p = os.path.join(HOME, "drafts", name); dd = json.load(open(p, encoding="utf-8")); dd["todo"] = no
-        json.dump(dd, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        save_json(p, dd, ensure_ascii=False, indent=1)
     notify(f"📌 {no} 草稿已暂存（没发）", f"{text[:200]}\n要发时回「{no} 可以发送」；再改回「{no} 暂存：新内容」。")
 
 
@@ -1311,14 +1349,29 @@ def ask_ai(no, question):
             y[no].setdefault("qa", []).append({"问": question, "答": ans[:500], "改写": nd[:300], "时间": f"{dt.datetime.now():%H:%M}"}); _open_save(y)
     if nd:
         if f:
-            d["draft"] = nd; json.dump(d, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            d["draft"] = nd; save_json(f, d, ensure_ascii=False, indent=1)
         elif ev:
             name = save_draft(ev, nd, reason=(x or {}).get("reason", ""))
             dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
-            json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            save_json(os.path.join(HOME, "drafts", name), dd, ensure_ascii=False, indent=1)
     notify(f"💡 {no} AI 的回答", event_context(ev, no) + "\n你的问题：" + question + "\n答复：" + ans
            + (f"\n新草稿：{nd}\n操作：回「{no} 可以发送」或「{no} 改成：…」。" if nd else f"\n操作：继续追问「{no} 问：…」；发送需确认草稿。"))
     status_event("核查已回答" if verify else "追问已回答", f"{no}：{ans}" + ("；草稿已更新，待本人确认" if nd else ""), event=ev)
+
+
+def sent_by_duty(e):
+    """另有值守程序用本人身份发到提醒群的话（它发前写 logs/duty_outbox.jsonl）：不是本人说的，不回执、不作答。"""
+    norm = lambda t: re.sub(r"\s+", "", str(t or ""))[:40]
+    want = norm(e.get("content"))
+    try:
+        rows = [json.loads(l) for l in open(os.path.join(HOME, "logs", "duty_outbox.jsonl"), encoding="utf-8").read().splitlines()[-30:] if l.strip()]
+    except (OSError, ValueError):
+        return False
+    return bool(want) and any(time.time() - r.get("ts", 0) < 300 and norm(r.get("text")) == want for r in rows)
+
+
+def duty_online():
+    return os.path.exists(os.path.join(HOME, "logs", "duty_on"))
 
 
 def handled_elsewhere(text):
@@ -1514,38 +1567,44 @@ def command(e):
     if not re.match(r"(?:改成[：:]|(?:全部(?:可以)?发送|可以(?:发送|发)?|发送|发出|发吧|发|不发|删除|作废|算了)(?=$|[\s，,。！!]))", action_text):
         answer_user(e, text)
         return
+    drop = re.match(r"(?:不发|删除|作废|算了)", action_text) is not None   # 只看指令开头：「改成：已删除测试数据」不是作废（3.4）
     for no in nos:
-        f, d = draft_by_no(no)
-        if not f:
-            done = next((x for x in reversed(console_closed_records()) if x.get("no") == no), None)
-            if done:   # 已在操作台 / 原会话处理过：只记日志，不再发「没找到」打扰本人（11-23 #uf5cw）
-                log("指令对应的事项已处理过，不重复提示", no, done.get("why", "")); continue
-            notify(f"❓ 没找到草稿 {no}", "可能已经发过或删了；看还有哪些：在提醒群发「草稿」两个字。"); continue
-        m = re.search(r"改成[：:]\s*(.+)", text, re.S)
-        if m:
-            d["draft"] = m.group(1).strip()
-        if re.search(r"不发|删除|作废|算了", text):
-            open_close(no, "你说不发，草稿已作废")
-            if os.path.exists(f): os.remove(f)
-        elif m or re.search(r"可以|发送|发出|发吧|^发", text):
-            try:
-                extra = re.sub(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})|可以发送|可以发|可以|发送|发出|发吧|^发", "", text).strip(" ，,。.;；：:")
-                if extra and not m:
-                    d["draft"], d["at_ids"] = confirmed_send_options(d, extra)
-                    json.dump(d, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-                reply(d["event"], d["draft"], keep_draft=False, at_ids=d.get("at_ids"))
-                st = d.get("sticker") if CFG.get("emoji") else ""
-                if st:
-                    send_sticker(d["event"], st)
-                audit(no, d["event"], d["draft"], text, sticker=st, reason=d.get("reason", ""))
-                # 先写“已处理”和发送留痕，再删草稿；这样旧版/异常进程不会把已发消息重新显示在“要你判断”。
-                open_close(no, "已按你确认发出：" + d["draft"][:100])
-                if os.path.exists(f):
-                    os.remove(f)
-            except SendFailed:
-                pass                                                       # 已用机器人通知过；草稿还在，恢复后再回「可以发送」
-            except Exception as ex:
-                runtime_alert("confirmed-command", f"⚠️ {no} 确认指令处理失败", event_context(d.get("event"), no) + f"\n你的指令：{text}\n错误：{report_text(repr(ex), 240)}\n草稿保留，尚未确认发送；请指导修复，勿重复发送。")
+        with EXECUTION_LOCK:                 # 提醒群「可以发送」和操作台按钮可能同时到，同一份草稿只发一次（3.4）
+            _confirm_one(no, text, drop)
+
+
+def _confirm_one(no, text, drop):
+    f, d = draft_by_no(no)
+    if not f:
+        done = next((x for x in reversed(console_closed_records()) if x.get("no") == no), None)
+        if done:   # 已在操作台 / 原会话处理过：只记日志，不再发「没找到」打扰本人（11-23 #uf5cw）
+            log("指令对应的事项已处理过，不重复提示", no, done.get("why", "")); return
+        notify(f"❓ 没找到草稿 {no}", "可能已经发过或删了；看还有哪些：在提醒群发「草稿」两个字。"); return
+    m = re.search(r"改成[：:]\s*(.+)", text, re.S)
+    if m:
+        d["draft"] = m.group(1).strip()
+    if drop and not m:
+        open_close(no, "你说不发，草稿已作废")
+        if os.path.exists(f): os.remove(f)
+    elif m or re.search(r"可以|发送|发出|发吧|^发", text):
+        try:
+            extra = re.sub(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})|可以发送|可以发|可以|发送|发出|发吧|^发", "", text).strip(" ，,。.;；：:")
+            if extra and not m:
+                d["draft"], d["at_ids"] = confirmed_send_options(d, extra)
+                save_json(f, d, ensure_ascii=False, indent=1)
+            reply(d["event"], d["draft"], keep_draft=False, at_ids=d.get("at_ids"))
+            st = d.get("sticker") if CFG.get("emoji") else ""
+            if st:
+                send_sticker(d["event"], st)
+            audit(no, d["event"], d["draft"], text, sticker=st, reason=d.get("reason", ""))
+            # 先写“已处理”和发送留痕，再删草稿；这样旧版/异常进程不会把已发消息重新显示在“要你判断”。
+            open_close(no, "已按你确认发出：" + d["draft"][:100])
+            if os.path.exists(f):
+                os.remove(f)
+        except SendFailed:
+            pass                                                       # 已用机器人通知过；草稿还在，恢复后再回「可以发送」
+        except Exception as ex:
+            runtime_alert("confirmed-command", f"⚠️ {no} 确认指令处理失败", event_context(d.get("event"), no) + f"\n你的指令：{text}\n错误：{report_text(repr(ex), 240)}\n草稿保留，尚未确认发送；请指导修复，勿重复发送。")
 
 
 def list_drafts_to_group():
@@ -1700,12 +1759,19 @@ def enqueue_owner_command(e):
     status_event("本人指令已排队", f"本人指令通道排队 {OWNER_Q.qsize()} 条，监听继续接收", event=e)
     # 回执不调用AI；即使前一条核查较慢，也能及时让本人知道消息已收到。
     def receipt():
+        if sent_by_duty(e):
+            return
+        if handled_elsewhere(e.get("content")):   # 交给其他值守的话也回一句收到，说明谁在处理（11-24 本人：发了没反应以为没人管）
+            # 值守上岗时写 logs/duty_on、收工删掉；不在岗就照实说，别让本人以为有人在处理（11-25 本人：全说收到却一条没回）
+            state = ("交给值守处理，结果会在这里回复。" if duty_online()
+                     else "值守现在不在岗，这条已记下，值守上岗后先处理并在这里回复。")
+            notify("💬 已收到你的消息", event_context(e) + "\n你的问题：" + str(e.get("content") or "")[:160]
+                   + "\n当前状态：" + state)
+            return
         with OWNER_STATE_LOCK:
             current = OWNER_COMMANDS.get(e.get("message_id"), {})
             if current.get("stage") not in ("queued", "running"):
                 return
-        if handled_elsewhere(e.get("content")):   # 交给其他值守的话不发「已收到」，免得一句话出两条回执（11-23）
-            return
         notify("💬 已收到你的消息", event_context(e) + "\n你的问题：" + str(e.get("content") or "")[:160]
                + "\n当前状态：已排队，处理结果会在这里回复。")
     threading.Thread(target=receipt, daemon=True).start()
@@ -1723,6 +1789,9 @@ def relevant(e):
     if CFG.get("notify_group") and e.get("conversation_id") == CFG["notify_group"]:
         if sender == CFG["my_name"] and e.get("message_id") not in SEEN:
             SEEN.add(e.get("message_id"))
+            if sent_by_duty(e):                                            # 值守程序用本人身份发的，不当本人指令执行（3.4）
+                log("值守代发，不当本人指令", str(e.get("content") or "")[:40])
+                return False
             status_event("收到消息", "收到本人在提醒群的指令", event=e)
             if SERVICE_RUNNING:
                 try:
@@ -1753,32 +1822,55 @@ def relevant(e):
 def backfill_loop():
     """兜底补读（11-19）：实时监听每 29 分钟续一次期，续期间隙、断线、订阅冷却时的消息会丢。
     每 backfill_minutes 分钟（默认 30）把各群从上次补读起的消息不过滤地拉一遍，没见过、又和我有关的照常交给 AI。"""
-    since = dt.datetime.now() - dt.timedelta(minutes=30)
+    # 3.4：提醒群（本人指令）也补读；每个群各记各的起点，拉失败不前移；一页满 50 条接着往后翻，不再跳过中间的消息
+    start = dt.datetime.now() - dt.timedelta(minutes=30)
+    since = {}
     while service_alive():
         time.sleep(max(5, int(CFG.get("backfill_minutes") or 30)) * 60)
         if SERVICE_RUNNING and (not in_window() or UPDATE_EXIT.is_set()):
             continue
-        now = dt.datetime.now()
-        for cid, name in {**CFG["groups"], **CFG["readonly_groups"]}.items():
+        targets = {**CFG["groups"], **CFG["readonly_groups"]}
+        if CFG.get("notify_group"):
+            targets.setdefault(CFG["notify_group"], "提醒群")
+        for cid, name in targets.items():
             if cid in CFG.get("paused_groups", []):
                 continue
-            r = run([DWS, "chat", "message", "list", "--group", cid, "--time", f"{since:%Y-%m-%d %H:%M:%S}", "--direction", "newer", "--limit", "50"], timeout=60)
-            try:
-                msgs = json.loads(r.stdout).get("messages") or []
-            except (ValueError, AttributeError):
-                detail = f"{name}：补读返回无法解析；{str(getattr(r, 'stdout', '') or getattr(r, 'stderr', ''))[:160]}"
-                log("补读失败", detail)
-                status_event("补读失败", detail)
-                runtime_alert("backfill-parse-" + name, "⚠️ 消息补读解析失败", f"时间：{dt.datetime.now():%Y-%m-%d %H:%M:%S}\n群：{name}\n任务：断线/续期补读\n错误：{detail}")
-                continue
-            for m in msgs:
-                e = {**m, "sender": m.get("sender"), "content": m.get("content") or m.get("text"), "conversation_id": m.get("openConversationId") or cid,
-                     "message_id": m.get("openMessageId") or m.get("messageId"), "quoted_message": m.get("quotedMessage")}
-                if e["message_id"] and relevant(e):
-                    SEEN.add(e["message_id"]); Q.put(e)
-                    log("补读到漏掉的消息", name, e["sender"], str(e["content"])[:60])
-                    status_event("收到消息", "断线/续期间隙补读，已加入处理队列", event=e)
-        since = now - dt.timedelta(minutes=2)
+            now = dt.datetime.now()
+            cursor = since.get(cid, start)
+            ok = True
+            for _page in range(5):
+                r = run([DWS, "chat", "message", "list", "--group", cid, "--time", f"{cursor:%Y-%m-%d %H:%M:%S}", "--direction", "newer", "--limit", "50"], timeout=60)
+                try:
+                    data = json.loads(r.stdout)
+                    if getattr(r, "returncode", 0) != 0 or not isinstance(data, dict) or "messages" not in data:
+                        raise ValueError("没有 messages")
+                    msgs = data.get("messages") or []
+                except (ValueError, AttributeError, TypeError):
+                    detail = f"{name}：补读返回无法解析；{str(getattr(r, 'stdout', '') or getattr(r, 'stderr', ''))[:160]}"
+                    log("补读失败", detail)
+                    status_event("补读失败", detail)
+                    runtime_alert("backfill-parse-" + name, "⚠️ 消息补读解析失败", f"时间：{dt.datetime.now():%Y-%m-%d %H:%M:%S}\n群：{name}\n任务：断线/续期补读\n错误：{detail}")
+                    ok = False
+                    break
+                for m in msgs:
+                    e = {**m, "sender": m.get("sender"), "content": m.get("content") or m.get("text"), "conversation_id": m.get("openConversationId") or cid,
+                         "message_id": m.get("openMessageId") or m.get("messageId"), "quoted_message": m.get("quotedMessage")}
+                    if e["message_id"] and e["message_id"] not in SEEN and relevant(e):
+                        SEEN.add(e["message_id"]); Q.put(e)
+                        log("补读到漏掉的消息", name, e["sender"], str(e["content"])[:60])
+                        status_event("收到消息", "断线/续期间隙补读，已加入处理队列", event=e)
+                last = msgs[-1].get("createTime") if msgs else None
+                if len(msgs) < 50 or not last:
+                    break
+                try:
+                    nxt = dt.datetime.strptime(str(last)[:19], "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    break
+                if nxt <= cursor:
+                    break
+                cursor = nxt
+            if ok:
+                since[cid] = now - dt.timedelta(minutes=2)
 
 
 def looks_like_json_event(line):
@@ -1865,6 +1957,7 @@ def listen(args, tag):
                 p = popen([DWS, "event", "+listen-im", *args, "--duration", f"{dur}m", "--format", "ndjson"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 with MONITOR_LOCK:
                     LISTENER_PROCESSES[tag] = p
+                LISTENERS[tag]["deadline"] = time.time() + dur * 60 + 300   # 超时 5 分钟还没退，看门的会结束它（3.4）
             except FileNotFoundError:
                 log(tag, "找不到钉钉 CLI（dws），10 分钟后再试")
                 if FAILS.get(tag) != -1:
@@ -1925,10 +2018,12 @@ def listen(args, tag):
                 err = report_text(json.dumps(failure, ensure_ascii=False), 600)
                 delay, budget = listen_retry_policy(failure)
                 blocked = attempts > budget
-                detail = f"{tag}：{err}；" + ("自动重试预算已用完，请处理后恢复" if blocked else f"至少 {delay:.0f} 秒后重试（{attempts}/{budget}）")
+                pause = max(900, delay)                # 3.4：预算用完不再停到第二天（睡眠、换网会让所有群一起断），歇 15 分钟再试；明确不可重试的才一直停
+                detail = f"{tag}：{err}；" + (("自动重试预算已用完，" + (f"{pause / 60:.0f} 分钟后自动再试" if budget else "请处理后恢复")) if blocked else f"至少 {delay:.0f} 秒后重试（{attempts}/{budget}）")
                 status_event("监听异常", detail)
                 runtime_alert("listen-error-" + tag, "⚠️ 监听连接失败", f"时间：{dt.datetime.now():%Y-%m-%d %H:%M:%S}\n群：{tag}\n任务：实时消息监听\n错误与处理：{detail}")
                 LISTENERS[tag]["retry_blocked"] = blocked
+                LISTENERS[tag]["blocked_until"] = time.time() + pause if blocked and budget else None
                 if blocked:
                     break
                 listener_wait(delay, args, tag)
@@ -2137,7 +2232,7 @@ def reply(e, text, keep_draft=True, at_ids=None):
         if keep_draft:                                                   # 发不出去的回复存成草稿，恢复后一句话重发
             name = save_draft(e, text); no = open_add(e, "draft", "发送失败待重发：" + text[:20])
             dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
-            json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            save_json(os.path.join(HOME, "drafts", name), dd, ensure_ascii=False, indent=1)
         send_failed(e, text, err, no)
         status_event("发送失败", f"{no}：{err}；草稿保留，尚未发出", event=e)
         raise SendFailed("回复失败：" + err)
@@ -2146,7 +2241,7 @@ def reply(e, text, keep_draft=True, at_ids=None):
 
 def save_draft(e, text, sticker="", reason=""):
     name = dt.datetime.now().strftime("%m%d-%H%M%S-") + re.sub(r"[^A-Za-z0-9]", "", e["message_id"])[:12] + ".json"
-    json.dump({"event": e, "draft": text, "sticker": sticker, "reason": reason}, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    save_json(os.path.join(HOME, "drafts", name), {"event": e, "draft": text, "sticker": sticker, "reason": reason}, ensure_ascii=False, indent=1)
     return name
 
 
@@ -2162,13 +2257,13 @@ def stage_draft(e, text, reason="后台已核查，请本人审核发送"):
     if old:
         old["draft"] = text
         old["reason"] = reason
-        json.dump(old, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        save_json(f, old, ensure_ascii=False, indent=1)
     else:
         name = save_draft(e, text, reason=reason)
         f = os.path.join(HOME, "drafts", name)
         old = json.load(open(f, encoding="utf-8"))
         old["todo"] = no
-        json.dump(old, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        save_json(f, old, ensure_ascii=False, indent=1)
     items = _open_load()
     items[no]["kind"] = "draft"
     items[no]["reason"] = reason
@@ -2222,7 +2317,7 @@ def handle(batch):
     remember(e, d)
     log("决定", e.get("sender"), d.get("action"), d.get("risk"), d.get("reason"), d.get("emoji") or "", d.get("sticker") or "")
     ats = re.findall(r"@([^\s@，,：:;；\n]+)", str(e.get("content") or ""))
-    if ats and not event_mentions_me(e) and not re.search(r"<@[^>]+>", event_text(e)) and not any(x in ("所有人", "全体成员") for x in ats):  # 未知 <@id> 不再误判为别人；正文/引用提到本人仍进入判断
+    if ats and not event_mentions_me(e) and not unknown_at_may_be_me(e) and not any(x in ("所有人", "全体成员") for x in ats):  # 未知 <@id> 不再误判为别人；正文/引用提到本人仍进入判断
         log("别人之间的对话，不回", e.get("sender"), ats[:3]); return "别人之间的对话，不回复、不生成草稿"
     if already_replied(e):                                             # 本人已经引用回复过这条：不再出草稿 / 提醒
         log("本人已回复过，不再出草稿", e.get("sender")); return "本人已在原会话回复，不再生成草稿"
@@ -2230,7 +2325,7 @@ def handle(batch):
         return "不回复：" + (d.get("reason") or "按职责和群规则跳过")
     brief = event_context(e) + f"\n原消息：{e.get('sender')}：{str(e.get('content'))[:200]}"
     if d.get("mine") is not True and d.get("action") == "reply":
-        d["action"] = "escalate"                                           # 不确定归我就不替我回（v2.5.1）
+        d["action"] = "escalate"                                           # 不确定归我就不替我回（v2.5）
     if d.get("action") != "reply" or not can_reply(e.get("conversation_id")):
         no = open_add(e, "escalate", d.get("reason") or "")
         x = _open_load(); x[no]["reason"] = d.get("reason") or ""; _open_save(x)
@@ -2240,9 +2335,14 @@ def handle(batch):
         # 需要本人拍板的消息也先生成建议回复，交给本人审核；生成失败才留在「要你判断」。
         draft = "" if d.get("media_failed") or not can_reply(e.get("conversation_id")) else escalation_draft(batch, d)
         if draft:
-            name = save_draft(e, draft, reason=d.get("reason") or "")
-            dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
-            json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            old_file, old_draft = draft_by_no(no)
+            if old_file:                                                   # 同一编号已有草稿（跨群合并）：更新它，不再存第二份（3.4）
+                old_draft["draft"], old_draft["reason"] = draft, d.get("reason") or ""
+                save_json(old_file, old_draft, ensure_ascii=False, indent=1)
+            else:
+                name = save_draft(e, draft, reason=d.get("reason") or "")
+                dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
+                save_json(os.path.join(HOME, "drafts", name), dd, ensure_ascii=False, indent=1)
             notify(f"📝 {no} 建议回复待你确认", f"{brief}\n草稿：{draft[:200]}\n依据：{(d.get('reason') or '')[:120]}"
                    f"\n回：「{no} 可以发送」/「{no} 不发」/「{no} 改成：新内容」/「{no} 问：……」")
             return f"{no} 已生成建议草稿，等待本人确认；依据：{d.get('reason') or '需要本人判断'}；草稿：{draft}"
@@ -2265,8 +2365,9 @@ def handle(batch):
     dd = json.load(open(os.path.join(HOME, "drafts", name), encoding="utf-8")); dd["todo"] = no
     if not existing_file:
         dd["sticker"] = sticker
-    json.dump(dd, open(os.path.join(HOME, "drafts", name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    notify(f"📝 {no} 草稿待你确认", f"{brief}\n草稿：{d.get('text', '')[:200]}" + (f"\n配表情包：{sticker}" if sticker else "") + f"\n依据：{(d.get('reason') or '')[:120]}"
+    save_json(os.path.join(HOME, "drafts", name), dd, ensure_ascii=False, indent=1)
+    merged = "\n（同一事项已有草稿，沿用原草稿；要换成新内容回「改成：」）" if existing_file else ""
+    notify(f"📝 {no} 草稿待你确认", f"{brief}\n草稿：{draft_text[:200]}{merged}" + (f"\n配表情包：{sticker}" if sticker else "") + f"\n依据：{(d.get('reason') or '')[:120]}"
            f"\n回：「{no} 可以发送」/「{no} 不发」/「{no} 改成：新内容」/「{no} 问：……」")
     return f"{no} 草稿待确认，尚未发送；依据：{d.get('reason') or 'AI 未提供依据'}；草稿：{draft_text}"
 
@@ -2359,11 +2460,26 @@ def stop_listener_process(p):
     if p.poll() is None:
         try:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(p.pid), "/T"], capture_output=True, timeout=10, **NOWIN)
+                # 没窗口的进程不带 /F 会拒绝结束，而且只返回错误码不抛异常（3.4）
+                subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True, timeout=10, **NOWIN)
             else:
                 os.killpg(p.pid, signal.SIGTERM)
         except (OSError, subprocess.TimeoutExpired):
-            p.terminate()
+            pass
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+
+def listener_blocked(st):
+    if not st.get("retry_blocked"):
+        return False
+    until = st.get("blocked_until")
+    if until and time.time() >= until:
+        st["retry_blocked"] = False                                       # 歇够了，下面照常重开（3.4）
+        return False
+    return True
 
 
 def sync_listeners():
@@ -2382,7 +2498,7 @@ def sync_listeners():
         for tag, (args, _) in wanted.items():
             thread = LISTENER_THREADS.get(tag)
             st = LISTENERS.get(tag) or {}
-            if st.get("retry_blocked"):
+            if listener_blocked(st):
                 continue
             if thread and thread.is_alive():
                 continue
@@ -2397,6 +2513,11 @@ def sync_listeners():
 def supervisor():
     """处理积压，并看住五路监听；单路线程异常退出时自动重开并记状态。"""
     while service_alive():
+        with MONITOR_LOCK:
+            stuck = [(t, p) for t, p in LISTENER_PROCESSES.items() if time.time() > (LISTENERS.get(t) or {}).get("deadline", float("inf")) and p.poll() is None]
+        for t, p in stuck:
+            log("监听进程超时未退出，结束后续期", t)
+            stop_listener_process(p)
         if SERVICE_RUNNING:
             sync_listeners()
             check_owner_commands()
@@ -2404,7 +2525,7 @@ def supervisor():
         now = time.time()
         for tag, (args, _) in ([] if SERVICE_RUNNING else list(LISTENER_SPECS.items())):
             st = LISTENERS.get(tag) or {}
-            if st.get("retry_blocked"):
+            if listener_blocked(st):
                 continue
             if st.get("alive") or now - float(st.get("stopped", 0) or 0) < 10:
                 continue
@@ -2478,6 +2599,7 @@ def morning_report():
     if os.path.exists(mark):
         return
     open(mark, "w").close()
+    threading.Thread(target=cleanup_old, daemon=True).start()            # 3.4：进程跨天常驻，保留期清理跟每日汇报每天跑一次，不再只在启动时
     p = os.path.join(MEMDIR, "每日总结.md")
     text = open(p, encoding="utf-8").read() if os.path.exists(p) else ""
     secs = [(m.group(1), m.start()) for m in re.finditer(r"^## (\d{4}-\d{2}-\d{2})", text, re.M)]
@@ -2612,6 +2734,26 @@ def update_receipt():
                 log("升级回执待重试")
 
 
+DATED_LOG = re.compile(r"^(?:\d{4}-\d{2}-\d{2}\.log|morning-[\d-]+\.sent|dws-version-[\d-]+\.checked|.+\.bak-\d+)$")
+TRIM_LOGS = ("status.jsonl", "notifications.jsonl", "owner-commands.jsonl", "user-dialogue.jsonl", "closed.jsonl", "withdrawn.jsonl")
+
+
+def trim_jsonl(path, keep=20000):
+    """只保留最后 keep 行；超过两倍才动，减少和追加写入撞上的机会。返回裁掉的行数。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return 0
+    if len(lines) <= keep * 2:
+        return 0
+    tmp = path + ".trim"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.writelines(lines[-keep:])
+    os.replace(tmp, path)
+    return len(lines) - keep
+
+
 def cleanup_old():
     """保留期（v2.7，config keep_days，默认 30 天，0 = 不清）：只清原始记录——收到的消息原文 inbox.jsonl、建记忆导出的群历史 history/、旧日志；
     提炼好的记忆（memory/）和没处理完的草稿不动。"""
@@ -2630,9 +2772,17 @@ def cleanup_old():
             keep = [l for l in open(inbox, encoding="utf-8") if _t(l) >= cut]
             n += sum(1 for _ in open(inbox, encoding="utf-8")) - len(keep)
             open(inbox, "w", encoding="utf-8").writelines(keep)
-    for f in glob.glob(os.path.join(HOME, "history", "*")) + glob.glob(os.path.join(HOME, "logs", "*")):
+    # logs/ 里也放着 open.json、commitments.json、no_map.json、replied.json 等状态文件，不能按修改时间整个删（3.4）；
+    # 只删带日期的日志、标记和 AI 临时文件，一直追加的 jsonl 记录按行数裁剪，免得越长越大
+    stale = [f for f in glob.glob(os.path.join(HOME, "logs", "*")) if DATED_LOG.match(os.path.basename(f))]
+    for f in glob.glob(os.path.join(HOME, "history", "*")) + stale:
         if os.path.isfile(f) and os.path.getmtime(f) < cut and not f.endswith(dt.date.today().isoformat() + ".log"):
             os.remove(f); n += 1
+    for f in glob.glob(os.path.join(HOME, "logs", "ai-*.txt")):          # AI 输出临时文件，正常用完就删；残留的隔天清
+        if os.path.isfile(f) and os.path.getmtime(f) < time.time() - 86400:
+            os.remove(f); n += 1
+    for name in TRIM_LOGS:
+        n += trim_jsonl(os.path.join(HOME, "logs", name))
     log("保留期清理", days, "天，清掉", n, "条 / 个")
     return n
 

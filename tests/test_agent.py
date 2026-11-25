@@ -544,3 +544,66 @@ def test_no_for_date_sequence(make_agent):
     assert m.no_for("msgA") == f"#{day}-1" and m.no_for("msgB") == f"#{day}-2"
     assert m.no_for("msgA") == f"#{day}-1"                       # 同一条消息永远同一个号
     assert re.findall(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})", f"#{day}-12 已处理 #ABCDE") == [f"#{day}-12", "#ABCDE"]
+
+
+def test_cleanup_old_keeps_state_files(make_agent):
+    a, notes, _ = make_agent({"keep_days": 30})
+    logs = os.path.join(a.HOME, "logs"); os.makedirs(logs, exist_ok=True)
+    old = time.time() - 40 * 86400
+    names = ["open.json", "commitments.json", "no_map.json", "replied.json", "2026-01-01.log", "morning-2026-01-01.sent", "ai-1-2.txt"]
+    for name in names:
+        p = os.path.join(logs, name); open(p, "w").write("{}"); os.utime(p, (old, old))
+    big = os.path.join(logs, "status.jsonl")
+    open(big, "w", encoding="utf-8").write("".join('{"i": %d}\n' % i for i in range(45000)))
+    a.cleanup_old()
+    left = set(os.listdir(logs))
+    assert {"open.json", "commitments.json", "no_map.json", "replied.json"} <= left
+    assert not {"2026-01-01.log", "morning-2026-01-01.sent", "ai-1-2.txt"} & left
+    rows = open(big, encoding="utf-8").read().splitlines()
+    assert len(rows) == 20000 and rows[-1] == '{"i": 44999}'
+
+
+def test_edit_with_delete_word_still_sends(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "旧草稿", "reason": "r"}
+    a.handle([msg("@本人 测试数据清了吗", mid="mDELW1")])
+    no = next(iter(a._open_load()))
+    a.command({"content": f"{no} 改成：已删除测试数据，请复测", "sender": "本人", "conversation_id": "cidN", "message_id": "c1"})
+    assert any("已删除测试数据" in str(c) for c in sent(calls)) and not drafts(a)
+
+
+def test_drop_still_works(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "草稿", "reason": "r"}
+    a.handle([msg("@本人 在吗", mid="mDROP1")])
+    no = next(iter(a._open_load()))
+    a.command({"content": f"{no} 不发", "sender": "本人", "conversation_id": "cidN", "message_id": "c2"})
+    assert not sent(calls) and not drafts(a)
+
+
+def test_backfill_includes_owner_group_and_keeps_cursor_on_failure(make_agent, monkeypatch):
+    import json as _j
+    from conftest import R
+    a, _, _ = make_agent({"groups": {"cidG": "测试群"}, "notify_group": "cidN", "backfill_minutes": 5})
+    asked, owner = [], []
+    def fake_run(args, **k):
+        cid = args[args.index("--group") + 1]
+        asked.append(cid)
+        if cid == "cidG":
+            return R(1, '{"error": "boom"}')
+        return R(0, _j.dumps({"messages": [{"sender": a.CFG["my_name"], "content": "草稿", "openConversationId": "cidN", "openMessageId": "own1"}]}))
+    a.run = fake_run
+    monkeypatch.setattr(a, "enqueue_owner_command", lambda e: owner.append(e["message_id"]))
+    monkeypatch.setattr(a, "process_owner_command", lambda e: owner.append(e["message_id"]))
+    rounds = iter([True, False])
+    a.in_window = lambda: next(rounds)
+    monkeypatch.setattr(a.time, "sleep", lambda s: None)
+    a.backfill_loop()
+    assert "cidN" in asked and owner == ["own1"]
+
+
+def test_task_key_ignores_non_ticket_words(make_agent):
+    a, _, _ = make_agent()
+    assert a.task_key(msg("编码用 UTF-8，Android-14 上复现")) == ""
+    assert a.task_key(msg("utf-8 乱码")) == ""
+    assert a.task_key(msg("TICKET-845 复测")) == "jira:845"

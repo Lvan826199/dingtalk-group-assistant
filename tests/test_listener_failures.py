@@ -101,3 +101,11 @@ def test_supervisor_respects_exhausted_retry_budget(make_agent, monkeypatch):
     a.LISTENERS["提醒群"] = {"alive": False, "retry_blocked": True}
     monkeypatch.setattr(a.threading, "Thread", lambda **kw: pytest.fail("不能绕过预算启动线程"))
     a.sync_listeners()
+
+
+def test_exhausted_budget_retries_after_pause(make_agent, monkeypatch):
+    a, _, _ = make_agent()
+    a.LISTENERS["提醒群"] = {"alive": False, "retry_blocked": True, "blocked_until": a.time.time() + 600}
+    assert a.listener_blocked(a.LISTENERS["提醒群"])
+    a.LISTENERS["提醒群"]["blocked_until"] = a.time.time() - 1
+    assert not a.listener_blocked(a.LISTENERS["提醒群"])

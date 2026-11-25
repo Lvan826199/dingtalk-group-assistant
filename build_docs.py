@@ -29,7 +29,7 @@ def render_doc(template, target, src, version, heads=None):
         a = s.index(h); b = s.index(fence, a) + len(fence)
         c = re.search(r"^```\s*$", s[b:], re.M).start() + b
         s = s[:b] + src[n].rstrip() + "\n" + s[c:]
-    s = re.sub(r"(版本：|当前版本：)v[0-9][^\s　（]*", r"\g<1>" + version.split()[0], s, count=1)
+    s = re.sub(r"(版本：|当前版本：)v[0-9][^\s　（]*", r"\g<1>" + re.sub(r"^(v\d+\.\d+)\.\d+", r"\1", version.split()[0]), s, count=1)   # 文档只写大版本
     s = s.replace(
         "> **先下载安装包**：打开指南页，按本机系统下载、解压；Windows 双击 `install.cmd`，macOS / Linux 在解压目录运行 `sh install.sh`。装好后把本文件拖给自己的 AI 助手，发「配置」。",
         "> **直接开始**：把本文件拖给自己的 AI 助手，发「开始」。AI 会按步骤完成配置；如果希望一键安装或方便升级，再从指南页下载对应系统的安装包。",
@@ -63,6 +63,8 @@ def main():
             parser.error("正式上线要先在调试群拿到梦无矶批准，并用 --approved <消息ID> 运行；只想看效果用 --preview")
     src = source_files(preview=args.preview)
     ver = re.search(r'VERSION = "([^"]+)"', src["agent.py"]).group(1)
+    if not args.preview and not args.docs_only and re.match(r"v\d+\.\d+\.\d+", ver):   # 对外只发大版本（11-24）
+        parser.error(f"当前是本地小版本 {ver}，正式上线前先把 VERSION 升成大版本（如 v3.4），并把 CHANGELOG-本地.md 汇总进 CHANGELOG.md")
     if args.preview:
         out = os.path.expanduser("~/qa-agent-site-preview")
         template = os.path.join(HERE, "docs", "分享-可直接部署并运行AI监控钉钉群并自动处理.md")

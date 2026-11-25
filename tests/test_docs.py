@@ -16,5 +16,5 @@ def test_render_preserves_embedded_backticks_and_json_boundary(tmp_path):
     text = target.read_text(encoding='utf-8')
     assert source['agent.py'] + '\n```' in text
     assert '```json\n{}\n```' in text
-    assert '### after\n保留' in text and '版本：v3.1.2' in text
+    assert '### after\n保留' in text and '版本：v3.1\n' in text  # 文档只写大版本（11-24）
     assert template.read_text(encoding='utf-8').startswith('版本：v1.0')

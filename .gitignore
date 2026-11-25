@@ -19,3 +19,5 @@ inbox.jsonl
 console_token
 dist/
 *.new
+# 本地小版本记录只在本机（11-24：对外只记大版本）
+CHANGELOG-本地.md
