@@ -8,7 +8,7 @@
 # 状态 runs/scheduled/state.json：上次定时/手动回归跑过的测试服 commit 和合同 rev；日志 runs/scheduled/<日期>-<轮>.log
 set -u
 export DWS_DISABLE_KEYCHAIN=1
-AT="$(cd "$(dirname "$0")" && pwd)"; QA="$(cd "$AT/../.." && pwd)"; SERVER="$QA/../backend-server"
+AT="$(cd "$(dirname "$0")" && pwd)"; QA="$(cd "$AT/../.." && pwd)"; SERVER="${APP_SERVER_REPO:-$HOME/qa-workflow/mirrors/backend-server}"
 SLOT="${1:-manual}"; FORCE="${2:-}"
 DIR="$QA/runs/scheduled"; mkdir -p "$DIR"
 LOG="$DIR/$(date +%F)-$SLOT.log"; STATE="$DIR/state.json"
@@ -36,7 +36,8 @@ if [ -n "$PREV_REV" ] && [ "$REV" != "$PREV_REV" ]; then
 else
   bash "$AT/run_suite.sh" >"$OUT" 2>&1
 fi
-grep -v "failed to get\|failed to store" "$OUT" | tail -15
+grep -E "^suite [0-9]+ env " "$OUT"   # 每个环境一行结果都留在日志里（11-25：只留末尾 15 行，前 3 个环境被截掉，误以为只跑了 3 个）
+grep -vE "failed to get|failed to store|^suite [0-9]+ env |^env [0-9]+ aa[0-9]" "$OUT" | tail -12
 END=$(cur)
 if [ "$END" != "$BUILD" ]; then echo "跑的过程中测试服换版 $BUILD → ${END}，本轮作废"; echo "STATUS=VOID"; exit 0; fi
 python3 -I -c "import json;json.dump({'build':'$BUILD','rev':'$REV','time':'$(date '+%F %T')','slot':'$SLOT'},open('$STATE','w'))"

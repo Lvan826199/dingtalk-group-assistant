@@ -21,7 +21,7 @@ def format_text(text):
     # 与安装包共用纯排版函数；导入不会启动操作台、读取助手配置或发送消息。
     from pathlib import Path
     import importlib.util
-    source = Path(__file__).resolve().parent.parent / "qa-agent-windows/console.py"
+    source = next((x for x in (Path.home() / "qa-agent/console.py", Path(__file__).resolve().parent.parent / "qa-agent-windows/console.py") if x.exists()), Path("/nonexistent"))   # launchd 读不了桌面，先用已部署的那份（11-25）
     if source.exists():
         spec = importlib.util.spec_from_file_location("qa_notice_layout", source)
         layout = importlib.util.module_from_spec(spec)
@@ -39,7 +39,7 @@ def mirror(title, text, delivered):
     """机器人结果同步操作台；网页离线由公共桥接落盘补记。"""
     from pathlib import Path
     import importlib.util
-    source = Path(__file__).resolve().parent.parent / "qa-agent-windows/console.py"
+    source = next((x for x in (Path.home() / "qa-agent/console.py", Path(__file__).resolve().parent.parent / "qa-agent-windows/console.py") if x.exists()), Path("/nonexistent"))   # launchd 读不了桌面，先用已部署的那份（11-25）
     spec = importlib.util.spec_from_file_location("qa_notice_bridge", source)
     bridge = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bridge)
@@ -78,4 +78,13 @@ def send(title, text, at_me=True):
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
-    print(send(sys.argv[1], sys.argv[2]))
+    res = send(sys.argv[1], sys.argv[2])
+    if not sys.argv[1].startswith(("📡", "⚠️", "⏰")):   # 告警类不算「回了本人」
+        # 值守用机器人回了本人：记一笔，群消息助手据此不再补「已收到」回执（3.4.3 降噪）
+        try:
+            import json, time
+            with open(os.path.expanduser("~/qa-agent/logs/duty_robot.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": time.time(), "title": sys.argv[1]}, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+    print(res)

@@ -16,7 +16,7 @@ import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVER = os.path.join(HERE, "../../../backend-server")
+SERVER = os.environ.get("APP_SERVER_REPO") or os.path.expanduser("~/qa-workflow/mirrors/backend-server")   # 只读镜像，launchd 读不了桌面（11-25）
 TEST_GROUP = os.environ.get("QA_TEST_GROUP", "")
 ENV_NAME = {"163": "Android", "164": "iOS", "165": "Android 1010100（048 新分支）", "166": "iOS 1010101（048 新分支）", "168": "Android 1.1.1 / 1010102", "169": "Android 1.1.1 / 1010103"}
 # @ 规则（用户 11-11 定：结果要 @ 到人）：每轮都 @QA负责人（QA 准出）和 合同维护人（盯 dev 测试进度）；有新失败再 @ 本轮构建里提交的研发。

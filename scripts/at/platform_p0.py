@@ -18,7 +18,7 @@ from merge_util import merged_case  # noqa: E402
 from platform_batch1 import body, items, req, step  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVER = os.path.join(HERE, "../../../backend-server")
+SERVER = os.environ.get("APP_SERVER_REPO") or os.path.expanduser("~/qa-workflow/mirrors/backend-server")   # 只读镜像，launchd 读不了桌面（11-25）
 PID = 903
 SUITE = {"name": "单接口全量（P0 核实）", "code": "p0-single",
          "description": "OPS-018 P0：合同 81 个接口里可安全调用的 63 个，每个接口正向 + 去必填 + 去可选 + 不带 token。期望值以代码和真实返回为准。"}

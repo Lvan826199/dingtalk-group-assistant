@@ -14,7 +14,7 @@ import uuid
 API = "http://aitest.example.internal:8000/api/v1"
 TOKEN = open(os.path.expanduser("~/.config/aitest/token")).read().strip()
 DRY = "--dry-run" in sys.argv
-SERVER_REPO = os.path.join(os.path.dirname(__file__), "../../../backend-server")
+SERVER_REPO = os.environ.get("APP_SERVER_REPO") or os.path.expanduser("~/qa-workflow/mirrors/backend-server")   # 只读镜像，launchd 读不了桌面（11-25）
 
 PROJECT = {"name": "APP 接口自动化（OPS-018）", "code": "APP-API",
            "description": "短剧 App 服务端接口自动化（OPS-018）。接口定义只从 backend-server api/openapi/app-v1.yaml 导入；"

@@ -7,7 +7,7 @@
 # 用法：on_contract_change.sh            （输出最后几行是回归结果；修正清单路径见 "清单:" 行）
 set -u
 cd "$(dirname "$0")"
-SERVER=../../../backend-server
+SERVER="${APP_SERVER_REPO:-$HOME/qa-workflow/mirrors/backend-server}"
 git -C "$SERVER" fetch -q origin dev
 REV=$(git -C "$SERVER" rev-parse --short origin/dev)
 BUILD=$(curl -s -m 10 https://api-test.example.com/actuator/info | python3 -I -c "import json,sys;print(json.load(sys.stdin)['git']['commit']['id'])")

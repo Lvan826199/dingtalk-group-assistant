@@ -20,7 +20,8 @@ B=http://aitest.example.internal:8000/api/v1/projects/903
 # 前置条件：账号余额不够先补币（金币解锁每轮扣 150），补不上也继续跑，由用例报 14002
 python3 -I "$(dirname "$0")/topup.py" || echo "[run_suite] 补币失败，继续执行"
 # 前置条件 1.5：各环境登录、把 uid / token 写进环境变量，用例可单独跑（用户 11-13 提议；再登录不会让旧 token 失效）
-if ! python3 -I "$(dirname "$0")/env_tokens.py" ${ENVS:-163 164 165 166 168 169}; then
+DEFAULT_ENVS=$(python3 -I -c "import sys;sys.path.insert(0,'$(dirname "$0")');from fixtures import F;print(*F('envs_full'))")   # 环境清单在 fixtures.json（11-25 优化 6）
+if ! python3 -I "$(dirname "$0")/env_tokens.py" ${ENVS:-$DEFAULT_ENVS}; then
   echo "PRECONDITION_BLOCKED：账号或对照变量准备失败，本轮未执行，不计通过"
   exit 2
 fi
@@ -40,7 +41,7 @@ fi
 # 开关关着时平台记「跳过」。这里只把开关当前值同步进各环境变量（aa_platform.py），不再临时停用用例。
 python3 -I "$(dirname "$0")/aa_platform.py" sync || echo "[run_suite] 防刷开关同步失败，防刷用例可能按旧值跑或跳过"
 for S in "${@:-72}"; do
-  for env in ${ENVS:-163 164 165 166 168 169}; do
+  for env in ${ENVS:-$DEFAULT_ENVS}; do
     # 前置条件 3（OPS-019 防刷，11-16 加）：套件 72 每个环境开跑前造一次性游客号刷到位，P1-防刷 用例断言后冻结清理；放在这里是因为「无播放 200 次」只封 1 小时
     if [ "$S" = 72 ]; then
       AA_SKIP=0

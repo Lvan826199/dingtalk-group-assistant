@@ -72,7 +72,8 @@ def details(c, ids):
         return list(ex.map(lambda i: c.call("/api/series/detail", {"seriesId": i}, raw=True), ids))
 
 
-OTHER_SERIES = [1000007, 1000059, 1000081, 1000066, 1000058]   # 换剧验证「按剧计数」用，取第一部不是 env series 的
+from fixtures import F  # noqa: E402
+OTHER_SERIES = F("aa_other_series")   # 换剧验证「按剧计数」用，取第一部不是 env series 的（fixtures.json）
 
 
 def paid_eps(c, series):

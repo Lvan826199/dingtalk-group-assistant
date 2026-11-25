@@ -17,8 +17,10 @@ from client import BASE, CTX, Client  # noqa: E402
 from schema_diff import collapse, diff  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVER = os.path.join(HERE, "../../../backend-server")
-SERIES = 1000058
+SERVER = os.environ.get("APP_SERVER_REPO") or os.path.expanduser("~/qa-workflow/mirrors/backend-server")   # 只读镜像，launchd 读不了桌面（11-25）
+sys.path.insert(0, HERE)
+from fixtures import F  # noqa: E402
+SERIES = F("p0_series")
 COMMON = {"sid", "pf", "appVersion", "appBuild", "lang", "uid", "token", "tz", "ab"}
 
 # P0 不调用（原因）。

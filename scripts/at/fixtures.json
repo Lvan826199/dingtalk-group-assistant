@@ -1,0 +1,10 @@
+{
+  "_说明": "测试数据集中在这里（11-25 优化 5：go_probe 写死已失效的 1000339，把「开放剧还是 15107」误报出去）。改数据只改这里；每项写明谁给的、什么时候核实的。fixtures.py check 会逐项实测，失效就先停下提示。",
+  "remix_series": {"value": 1000277, "from": "研发C 11-20", "verified": "2026-11-25", "check": "go eligibility canCreate=true"},
+  "p0_series": {"value": 1000058, "from": "首页 Popular，前 5 集免费、第 6 集起付费", "verified": "2026-11-12", "check": "series/detail code=0"},
+  "aa_other_series": {"value": [1000007, 1000059, 1000081, 1000066, 1000058], "from": "防刷「按剧计数」换剧用", "verified": "2026-11-16", "check": "series/detail code=0"},
+  "go_accounts": {"value": {"android": {"sid": "at-sid-01", "pf": "a", "app_version": "1.1.0", "app_build": 1010001},
+                            "ios": {"sid": "at-sid-02", "pf": "i", "app_version": "1.0.9", "app_build": 1000901}},
+                  "from": "QA 专用号（合同维护人 11-11）", "verified": "2026-11-25"},
+  "envs_full": {"value": [163, 164, 165, 166, 168, 169], "from": "平台项目 903 六个 QA 环境", "verified": "2026-11-25"}
+}

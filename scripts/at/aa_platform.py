@@ -6,7 +6,8 @@ import os, re, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import series_check as sc
 
-ENVS = os.environ.get("ENVS", "163 164 165 166 168 169").split()
+from fixtures import F  # noqa: E402
+ENVS = os.environ.get("ENVS") and os.environ["ENVS"].split() or [str(x) for x in F("envs_full")]
 COND = [{"var": "antiAbuseSwitch", "op": "eq", "value": "1"}]
 
 

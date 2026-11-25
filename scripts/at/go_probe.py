@@ -17,11 +17,11 @@ from client import Client  # noqa: E402
 from schema_diff import collapse, diff  # noqa: E402
 
 RUNS = os.path.join(HERE, "../../runs")
-ACCOUNTS = {"android": dict(sid="at-sid-01", pf="a", app_version="1.1.0", app_build=1010001),
-            "ios": dict(sid="at-sid-02", pf="i", app_version="1.0.9", app_build=1000901)}
+from fixtures import F  # noqa: E402  测试数据集中在 fixtures.json（11-25）
+ACCOUNTS = F("go_accounts")
 OTHER = {"android": "at-sid-02", "ios": "at-sid-01"}
 GO_PATHS_PREFIX = ("/api/go/",)
-REMIX_SERIES = 1000339   # 测试服 eligibility canCreate=true 的剧（11-12 扫 1000001–1000400 得 11 部，Apifox 示例也用它）
+REMIX_SERIES = F("remix_series")
 
 
 def load_spec():
@@ -186,9 +186,9 @@ def main():
     elig = probe("/api/go/remix/eligibility", {"seriesId": series})
     probe("/api/go/remix/characters", {"seriesId": series}, case="回归剧不在二创名单 → 15107", expect=15107)
     probe("/api/go/remix/eligibility", {"seriesId": REMIX_SERIES}, case="二创开放剧 canCreate=true")
-    probe("/api/go/remix/characters", {"seriesId": REMIX_SERIES}, case="二创开放剧正向（11-12 实际 15107，疑问已问研发C）")
+    probe("/api/go/remix/characters", {"seriesId": REMIX_SERIES}, case="二创开放剧正向")
     probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 2}, case="缺 media → 10101（合同 media 必填，11-24 改）", expect=10101)
-    probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 2, "media": 1}, case="media=1（11-12 实际 15107）")
+    probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 2, "media": 1}, case="media=1 正向")
     probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 1}, case="characterCount=1 → 10101 templates parameters INVALID（疑问）", expect=10101)
     probe("/api/go/remix/templates", {"seriesId": REMIX_SERIES, "characterCount": 2, "media": 0}, case="media=0 → 10101", expect=10101)
     probe("/api/go/remix/series/works", {"seriesId": REMIX_SERIES, "size": 5}, case="二创开放剧")
