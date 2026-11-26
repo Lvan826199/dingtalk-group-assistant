@@ -34,7 +34,7 @@ v2.2：提醒只走本人专属群的机器人（Webhook + 加签，必配）：
 import atexit, base64, datetime as dt, glob, signal, hashlib, hmac, json, os, queue, re, shlex, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from collections import deque
 
-VERSION = "v3.4 2026-11-25"
+VERSION = "v3.5 2026-11-26"
 HOME = os.path.dirname(os.path.abspath(__file__))
 # 本地随包模块；也支持 python -I agent.py 的手动安装 / 验收。
 if HOME not in sys.path:
@@ -931,6 +931,19 @@ def console_closed_records():
         return []
 
 
+QUIET_CLOSE = ("不归我", "手动已处理", "你说不发", "草稿已删除")
+RECEIPT_WAIT = 60
+
+
+def duty_answered_since(ts):
+    """值守用机器人回本人时（notify_user.py）写 logs/duty_robot.jsonl；ts 之后有一条就算已回。"""
+    try:
+        rows = open(os.path.join(HOME, "logs", "duty_robot.jsonl"), encoding="utf-8").read().splitlines()[-30:]
+        return any(json.loads(l).get("ts", 0) >= ts for l in rows if l.strip())
+    except (OSError, ValueError):
+        return False
+
+
 def open_close(no, why, reply_event=None):
     """幂等关闭事项；旧版调用只传两个参数也必须继续可用。"""
     d = _open_load()
@@ -938,7 +951,8 @@ def open_close(no, why, reply_event=None):
     if x:
         _open_save(d); log("已处理", no, why)
         status_event("事项已关闭", f"{no}：{why}", event=reply_event or x.get("event"))
-        notify(f"✅ {no} 已处理", event_context(x.get("event") or reply_event, no) + f"\n{x['who']}：{x['what']}\n{why}")
+        if not str(why).startswith(QUIET_CLOSE):                           # 3.4.3：本人自己点的不归我 / 手动已处理 / 不发，不再回一张 ✅
+            notify(f"✅ {no} 已处理", event_context(x.get("event") or reply_event, no) + f"\n{x['who']}：{x['what']}\n{why}")
         return True
     # 重复点击、旧进程重试或启动修复时可能已经关过；不要抛异常，也不要重复通知。
     log("已处理（幂等）", no, why)
@@ -1021,6 +1035,27 @@ def mark_replied(mid):
         save_json(_replied_path(), keep)
     except OSError:
         pass
+
+
+def duty_replied(e, since=None):
+    """值守程序已用本人身份在同一会话回了这条（引用它，或 @ 了发消息的人），助手就别再出一份草稿（3.4.2：11-25 值守 11:03 已回 项目助手，
+    助手 11:04 又出草稿 #1125-3，本人确认后两条说法打架）。值守发前写 logs/duty_outbox.jsonl：{ts, cid, text, reply_to?}。"""
+    e = e or {}
+    try:
+        rows = [json.loads(l) for l in open(os.path.join(HOME, "logs", "duty_outbox.jsonl"), encoding="utf-8").read().splitlines()[-100:] if l.strip()]
+    except (OSError, ValueError):
+        return None
+    try:
+        start = float(since or e.get("_t") or int(e.get("event_time") or 0) / 1000 or 0)
+    except (TypeError, ValueError):
+        start = 0
+    sid = e.get("sender_open_dingtalk_id") or e.get("senderId") or ""
+    for r in reversed(rows):
+        if r.get("cid") != e.get("conversation_id") or not start or not (start - 5 <= r.get("ts", 0) <= start + 6 * 3600):
+            continue
+        if r.get("reply_to") == e.get("message_id") or (sid and f"<@{sid}>" in str(r.get("text") or "")):
+            return r
+    return None
 
 
 def already_replied(e):
@@ -1374,6 +1409,19 @@ def duty_online():
     return os.path.exists(os.path.join(HOME, "logs", "duty_on"))
 
 
+def for_duty(e):
+    """另有值守在岗时，本人一句没带 #编号、也没引用助手草稿卡的「发吧 / 可以发送」是回给值守的（3.4.1：11-25 回值守「发吧」，助手弹了「没能确定事项」）。"""
+    if not CFG.get("handled_elsewhere") or not duty_online():
+        return False
+    text = re.sub(r'^(?:\s*(?:<@[^>]+>|@[^\s]+)\s*)+', '', str(e.get("content") or "").strip())
+    if re.search(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})", text):
+        return False
+    if not re.match(r"(?:全部(?:可以)?发送|可以(?:发送|发)?|发送|发出|发吧|发|不发)(?=$|[\s，,。！!])", text):
+        return False
+    q = e.get("quoted_message") or e.get("quotedMessage") or {}
+    return not quoted_action_nos(str(q.get("content") or q.get("text") or ""))
+
+
 def handled_elsewhere(text):
     skip = CFG.get("handled_elsewhere")
     return bool(skip and re.search(skip, str(text or "")))
@@ -1483,6 +1531,8 @@ def command_text(e):
     nos = quoted_action_nos(quoted)
     if len(nos) == 1:
         return nos[0] + " " + text
+    if for_duty(e):
+        status_event("交给其他值守，不作答", "没带编号、没引用助手卡片的确认，按值守的事处理：" + text[:40]); return None
     notify("⚠️ 没能确定你要操作的事项", event_context(e) + "\n已收到指令，但引用里没有唯一编号。请引用一条具体草稿或写出 #编号；尚未发送任何内容。")
     return None
 
@@ -1587,6 +1637,11 @@ def _confirm_one(no, text, drop):
         open_close(no, "你说不发，草稿已作废")
         if os.path.exists(f): os.remove(f)
     elif m or re.search(r"可以|发送|发出|发吧|^发", text):
+        done = None if m else duty_replied(d.get("event"), since=os.path.getmtime(f))
+        if done:                                                           # 出草稿后值守已经回了：不再用本人身份发第二遍（3.4.2）
+            notify(f"⏸ {no} 没发：值守已回复", event_context(d.get("event"), no) + f"\n值守 {dt.datetime.fromtimestamp(done['ts']):%H:%M} 已在原会话回复：{str(done.get('text') or '')[:120]}"
+                   f"\n这份草稿先没发。仍要发就回「{no} 改成：内容」，不要了回「{no} 不发」。")
+            return
         try:
             extra = re.sub(r"#(?:\d{4}-\d{1,3}|[A-Za-z0-9]{3,8})|可以发送|可以发|可以|发送|发出|发吧|^发", "", text).strip(" ，,。.;；：:")
             if extra and not m:
@@ -1645,11 +1700,17 @@ def owner_snapshot(now=None):
         rows = sorted((dict(x) for x in OWNER_COMMANDS.values()), key=lambda x: x["received"], reverse=True)
     for row in rows:
         row["age_seconds"] = max(0, int(now - row["received"]))
-    pending = [x for x in rows if x["stage"] in ("queued", "running", "failed", "interrupted")]
-    history = [x for x in rows if x["stage"] not in ("queued", "running", "failed", "interrupted")]
+    # 3.4.7：失败 / 中断的指令超过 12 小时、或之后值守已用机器人回过本人，就不再挂红感叹号（11-25 本人：回过了感叹号还一直在，
+    # 实际是 11-23 的一条失败记录没人清）。它们仍留在历史里，标 stale。
+    for row in rows:
+        if row["stage"] in ("failed", "interrupted") and (row["age_seconds"] > 12 * 3600 or duty_answered_since(row["received"])):
+            row["stale"] = True
+    live = lambda x: x["stage"] in ("queued", "running") or (x["stage"] in ("failed", "interrupted") and not x.get("stale"))
+    pending = [x for x in rows if live(x)]
+    history = [x for x in rows if not live(x)]
     return {"queued": sum(x["stage"] == "queued" for x in rows),
             "running": sum(x["stage"] == "running" for x in rows),
-            "needs_attention": sum(x["stage"] in ("failed", "interrupted") for x in rows),
+            "needs_attention": sum(x["stage"] in ("failed", "interrupted") and not x.get("stale") for x in rows),
             "recent": sorted(pending, key=lambda x: x["received"]) + history[:20]}
 
 
@@ -1761,13 +1822,19 @@ def enqueue_owner_command(e):
     def receipt():
         if sent_by_duty(e):
             return
-        if handled_elsewhere(e.get("content")):   # 交给其他值守的话也回一句收到，说明谁在处理（11-24 本人：发了没反应以为没人管）
+        if handled_elsewhere(e.get("content")) or for_duty(e):   # 交给其他值守的话也回一句收到，说明谁在处理（11-24 本人：发了没反应以为没人管）
             # 值守上岗时写 logs/duty_on、收工删掉；不在岗就照实说，别让本人以为有人在处理（11-25 本人：全说收到却一条没回）
+            if duty_online():
+                # 3.4.3 降噪：值守在岗时先等 RECEIPT_WAIT 秒，值守已经用机器人回了就不再补「已收到」
+                time.sleep(RECEIPT_WAIT)
+                if duty_answered_since(float(e.get("_t") or time.time() - RECEIPT_WAIT)):
+                    return
             state = ("交给值守处理，结果会在这里回复。" if duty_online()
                      else "值守现在不在岗，这条已记下，值守上岗后先处理并在这里回复。")
             notify("💬 已收到你的消息", event_context(e) + "\n你的问题：" + str(e.get("content") or "")[:160]
                    + "\n当前状态：" + state)
             return
+        time.sleep(min(RECEIPT_WAIT, 20))                                   # 3.4.3：很快处理完的指令不再先来一张「已收到」
         with OWNER_STATE_LOCK:
             current = OWNER_COMMANDS.get(e.get("message_id"), {})
             if current.get("stage") not in ("queued", "running"):
@@ -2311,6 +2378,10 @@ def handle(batch):
     """v2.8：任何回复都先写草稿交本人确认，不自动发出任何消息（包括表情）。"""
     e = batch[-1]
     JOB_CONTEXT.event = e
+    if CFG.get("group_to_duty") and duty_online():
+        # 3.4.3 只留一个发送方：本机另有值守且在岗时，群 / 私聊消息交给值守处理，助手不判断、不出草稿；值守不在岗才照常出草稿兜底
+        status_event("交给值守", "值守在岗，由值守处理；助手不出草稿", event=e)
+        log("交给值守", e.get("sender"), str(e.get("content") or "")[:40]); return "值守在岗，交给值守处理，不生成草稿"
     d = decide(batch)
     if d.get("action") == "ignore" and (d.get("uncertain") is True or any(word in str(d.get("reason") or "") for word in ("不确定", "拿不准", "无法确认"))):
         d = {**d, "action": "escalate", "mine": False}
@@ -2321,6 +2392,8 @@ def handle(batch):
         log("别人之间的对话，不回", e.get("sender"), ats[:3]); return "别人之间的对话，不回复、不生成草稿"
     if already_replied(e):                                             # 本人已经引用回复过这条：不再出草稿 / 提醒
         log("本人已回复过，不再出草稿", e.get("sender")); return "本人已在原会话回复，不再生成草稿"
+    if duty_replied(e):                                                # 值守已用本人身份回了这个人（3.4.2）
+        log("值守已回复，不再出草稿", e.get("sender")); return "值守已在原会话回复，不再生成草稿"
     if d.get("action") == "ignore":
         return "不回复：" + (d.get("reason") or "按职责和群规则跳过")
     brief = event_context(e) + f"\n原消息：{e.get('sender')}：{str(e.get('content'))[:200]}"

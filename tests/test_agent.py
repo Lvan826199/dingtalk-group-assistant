@@ -607,3 +607,59 @@ def test_task_key_ignores_non_ticket_words(make_agent):
     assert a.task_key(msg("编码用 UTF-8，Android-14 上复现")) == ""
     assert a.task_key(msg("utf-8 乱码")) == ""
     assert a.task_key(msg("TICKET-845 复测")) == "jira:845"
+
+
+def _outbox(a, rows):
+    p = os.path.join(a.HOME, "logs", "duty_outbox.jsonl"); os.makedirs(os.path.dirname(p), exist_ok=True)
+    open(p, "w", encoding="utf-8").write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+
+
+def test_no_draft_when_duty_already_replied(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "另一种说法", "reason": "r"}
+    now = time.time()
+    _outbox(a, [{"ts": now + 1, "cid": GROUP, "text": "<@DIDX>\n\n已经回过了"}])
+    e = msg("@本人 合同按哪份核", mid="mDUTY1") | {"sender_open_dingtalk_id": "DIDX", "_t": now}
+    a.handle([e])
+    assert not drafts(a) and not sent(calls)
+
+
+def test_unrelated_duty_message_does_not_block_draft(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "草稿", "reason": "r"}
+    now = time.time()
+    _outbox(a, [{"ts": now + 1, "cid": GROUP, "text": "<@OTHER>\n\n说别的事"}])
+    a.handle([msg("@本人 在吗", mid="mDUTY2") | {"sender_open_dingtalk_id": "DIDX", "_t": now}])
+    assert drafts(a)
+
+
+def test_confirm_skips_when_duty_replied_after_draft(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "草稿", "reason": "r"}
+    a.handle([msg("@本人 在吗", mid="mDUTY3") | {"sender_open_dingtalk_id": "DIDX", "_t": time.time() - 60}])
+    no = next(iter(a._open_load()))
+    _outbox(a, [{"ts": time.time() + 1, "cid": GROUP, "text": "x", "reply_to": "mDUTY3"}])
+    a.command({"content": f"{no} 可以发送", "sender": "本人", "conversation_id": "cidN", "message_id": "c9"})
+    assert not sent(calls) and drafts(a) and any("值守已回复" in t for t, _ in notes)
+
+
+def test_group_to_duty_skips_ai_when_on_duty(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}, "group_to_duty": True})
+    asked = []
+    a.decide = lambda b: asked.append(1) or {"action": "reply", "mine": True, "risk": "low", "text": "x", "reason": "r"}
+    flag = os.path.join(a.HOME, "logs", "duty_on"); os.makedirs(os.path.dirname(flag), exist_ok=True); open(flag, "w").close()
+    a.handle([msg("@本人 在吗", mid="mG2D1")])
+    assert not asked and not drafts(a)
+    os.remove(flag)
+    a.handle([msg("@本人 在吗", mid="mG2D2")])
+    assert asked and drafts(a)
+
+
+def test_quiet_close_skips_card(make_agent):
+    a, notes, calls = make_agent({"groups": {GROUP: "测试群"}})
+    a.decide = lambda b: {"action": "reply", "mine": True, "risk": "low", "text": "草稿", "reason": "r"}
+    a.handle([msg("@本人 在吗", mid="mQUIET1")])
+    no = next(iter(a._open_load()))
+    n = len(notes)
+    a.command({"content": f"{no} 不发", "sender": "本人", "conversation_id": "cidN", "message_id": "cq"})
+    assert not any("已处理" in t for t, _ in notes[n:])

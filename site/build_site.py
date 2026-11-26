@@ -5,6 +5,9 @@ import html, json, os, re, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.dirname(HERE)
 OUT = os.path.expanduser(os.environ.get("SITE_DIR", "~/qa-agent-site"))
 PREVIEW = os.environ.get("PREVIEW") == "1"
+if "SITE_DIR" not in os.environ and os.environ.get("SITE_PUBLISH") != "1" and os.path.exists(os.path.join(OUT, "version.json")):
+    # 默认目录就是正在对外提供的站点：不带 SITE_DIR 随手一跑会把它覆盖成未发布的版本（11-20、11-26 各出过一次）
+    sys.exit(f"{OUT} 已有站点。正式更新用 build_docs.py（会带 SITE_PUBLISH=1）；只是试构建请设 SITE_DIR=<临时目录>；确定要覆盖就加 SITE_PUBLISH=1")
 UPDATE_BASE_URL = os.environ.get("UPDATE_BASE_URL", "https://lvan826199.github.io/dingtalk-group-assistant/").rstrip("/")
 DOCS = [("分享-可直接部署并运行AI监控钉钉群并自动处理.md", "部署文档（新同事从这里开始）", "下载部署文档，拖给 AI 发「开始」"),
         ("CHANGELOG.md", "更新记录", "每个版本改了什么"),
@@ -35,6 +38,7 @@ for i, (name, title, note) in enumerate(DOCS):
     rows.append(f'<li><div><a class="t" href="view.html?f={dst}&n={html.escape(name)}">{html.escape(title)}</a><span class="n">{html.escape(note)}</span></div>'
                 f'<a class="dl" href="files/{dst}" download="{html.escape(name)}">下载 · {kb} KB</a></li>')
 shutil.copy(os.path.join(HERE, "guide.css"), os.path.join(OUT, "assets"))
+shutil.copy(os.path.join(HERE, "help.css"), os.path.join(OUT, "assets"))   # 使用帮助页（help.html）的样式
 cl = open(os.path.join(REPO, "CHANGELOG.md"), encoding="utf-8").read().replace("</", "<\\/")
 cards = []
 for i, (name, title, note) in enumerate(DOCS):
@@ -55,11 +59,25 @@ def _h(name):
 for _n in ("guide.css", "console.jpg", "console-panel.jpg"):
     page = re.sub(r"assets/" + re.escape(_n) + r"\?v=[^\"']*", f"assets/{_n}?v={_h(_n)}", page)
 open(os.path.join(OUT, "index.html"), "w", encoding="utf-8").write(page)
+# 使用帮助页：操作台顶栏「帮助」打开它（console.py 的 HELP_URL）。超时时长、监听时段取 agent.py 的默认值，改了默认值帮助页跟着变。
+_agent = open(os.path.join(REPO, "agent.py"), encoding="utf-8").read()
+_mins = int(re.search(r'"remind_after_minutes": (\d+)', _agent).group(1))
+_win = re.search(r'"window": \["([0-9:]+)", "([0-9:]+)"\]', _agent).groups()
+helppage = open(os.path.join(HERE, "help.html"), encoding="utf-8").read()
+_major = re.sub(r"^(v\d+\.\d+)\.\d+", r"\1", ver.split()[0])   # 对外只出大版本（11-24 规则）：帮助页写 v3.4，不写 v3.4.6
+for k, v in {"{{VER}}": html.escape(_major), "{{VER_SHORT}}": html.escape(ver.split()[0]),
+             "{{REMIND}}": f"{_mins // 60} 小时" if _mins % 60 == 0 else f"{_mins} 分钟", "{{WIN}}": f"{_win[0]}–{_win[1]}"}.items():
+    helppage = helppage.replace(k, v)
+if PREVIEW:
+    helppage = helppage.replace("<body>", "<body>" + banner, 1)
+for _n in ("guide.css", "help.css"):
+    helppage = re.sub(r"assets/" + re.escape(_n) + r"\?v=[^\"']*", f"assets/{_n}?v={_h(_n)}", helppage)
+open(os.path.join(OUT, "help.html"), "w", encoding="utf-8").write(helppage)
 open(os.path.join(OUT, "view.html"), "w", encoding="utf-8").write(f"""<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>群消息助手 · 文档</title><script>try{{var t=localStorage.getItem('qa-theme');if(t&&t!=='auto')document.documentElement.dataset.theme=t}}catch(e){{}}</script>
 <link rel="stylesheet" href="assets/guide.css?v={_h('guide.css')}"><style>#c{{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px 32px;margin-top:20px;overflow-x:auto}}#c pre{{background:var(--surface-soft);padding:14px;border-radius:8px;overflow-x:auto;font-size:13px}}#c table{{border-collapse:collapse;display:block;overflow-x:auto}}#c td,#c th{{border:1px solid var(--border);padding:6px 10px}}#c h1,#c h2,#c h3{{margin:1.2em 0 .5em}}#c p{{margin:.6em 0}}</style>
 <script src="assets/marked.min.js"></script></head><body>
-<header class="site-header"><div class="header-inner"><a class="brand" href="./"><span class="logo">群</span>群消息助手</a><nav class="header-nav"><a href="./">← 返回指南</a></nav><span id="mdtools" style="display:none;gap:10px;align-items:center;font-size:13.5px"><button class="link-button" id="cp">⧉ 复制页面</button><a id="raw"></a></span><a class="button ghost" id="dl" download>下载原文件</a></div></header>
+<header class="site-header"><div class="header-inner"><a class="brand" href="./"><span class="logo">群</span>群消息助手</a><nav class="header-nav"><a href="./">← 返回指南</a><a href="help.html">使用帮助</a></nav><span id="mdtools" style="display:none;gap:10px;align-items:center;font-size:13.5px"><button class="link-button" id="cp">⧉ 复制页面</button><a id="raw"></a></span><a class="button ghost" id="dl" download>下载原文件</a></div></header>
 <div class="toast" id="toast">已复制</div>
 <main class="page"><div id="c">加载中…</div></main>
 <script>const q=new URLSearchParams(location.search),f=q.get('f')||'',n=q.get('n')||f;

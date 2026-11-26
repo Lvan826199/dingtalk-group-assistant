@@ -91,7 +91,7 @@ def main():
             shutil.copy(p, template)
         print("已生成", doc, "版本", ver)
     if not args.docs_only:
-        subprocess.run([sys.executable, "-I", os.path.join(HERE, "site", "build_site.py")], check=True)
+        subprocess.run([sys.executable, "-I", os.path.join(HERE, "site", "build_site.py")], env={**os.environ, "SITE_PUBLISH": "1"}, check=True)
 
 
 if __name__ == "__main__":

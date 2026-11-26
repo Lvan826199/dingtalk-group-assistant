@@ -303,3 +303,17 @@ def test_receipt_says_duty_offline_without_flag(make_agent, monkeypatch):
     states = [x for t, x in notes if "已收到你的消息" in t]
     assert any("批准发布" in x and "不在岗" in x for x in states)
     assert any("批准上线" in x and "交给值守处理" in x for x in states)
+
+
+def test_bare_confirm_goes_to_duty_when_on_duty(make_agent):
+    import os
+    a, console, notes, calls, *_ = _boot(make_agent)
+    a.CFG["handled_elsewhere"] = r"^(批准|同意)"
+    flag = os.path.join(a.HOME, "logs", "duty_on"); os.makedirs(os.path.dirname(flag), exist_ok=True)
+    open(flag, "w").close()
+    e = {"sender": "本人", "content": "@助手 发吧", "conversation_id": "cidN", "message_id": "msgBARE1"}
+    assert a.for_duty(e)
+    assert a.command_text(e) is None and not any("没能确定" in t for t, _ in notes)
+    assert not a.for_duty({**e, "content": "#1125-1 发吧"})
+    os.remove(flag)
+    assert not a.for_duty(e)

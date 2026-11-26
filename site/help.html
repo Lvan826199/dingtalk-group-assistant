@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>群消息助手 · 使用帮助</title>
+<script>try{var t=localStorage.getItem('qa-theme');if(t&&t!=='auto')document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="assets/guide.css?v={{VER_SHORT}}"><link rel="stylesheet" href="assets/help.css?v={{VER_SHORT}}"></head>
+<body>
+<header class="site-header"><div class="header-inner">
+  <a class="brand" href="./"><span class="logo">群</span>群消息助手</a>
+  <nav class="header-nav"><a href="./">新手指南</a><a href="help.html" aria-current="page" style="color:var(--text);font-weight:600">使用帮助</a></nav>
+  <div class="theme-picker" role="group" aria-label="页面主题"><button data-t="auto">跟随系统</button><button data-t="light">浅色</button><button data-t="dark">深色</button></div>
+</div></header>
+
+<div class="help-layout">
+<nav class="help-toc" aria-label="本页目录">
+  <b>本页目录</b>
+  <a href="#what">1 它是什么</a>
+  <a href="#console">2 操作台</a>
+  <a class="sub" href="#cols">三栏和颜色</a>
+  <a class="sub" href="#buttons">卡片上的按钮</a>
+  <a class="sub" href="#header">顶部状态</a>
+  <a class="sub" href="#tools">搜索和其他功能</a>
+  <a href="#terms">3 名词解释</a>
+  <a href="#commands">4 提醒群指令</a>
+  <a href="#cards">5 机器人卡片怎么看</a>
+  <a href="#faq">6 常见问题</a>
+</nav>
+
+<main class="help-main">
+<div class="help-hero">
+  <h1>使用帮助</h1>
+  <p>群消息助手 {{VER}}。这页讲日常怎么用：操作台每个按钮做什么、在钉钉提醒群里怎么说、遇到问题怎么办。第一次安装请看<a href="./">新手指南</a>。</p>
+</div>
+
+<section id="what">
+  <h2><span class="num">1</span>它是什么，怎么工作</h2>
+  <p>群消息助手替你盯着钉钉工作群：和你有关的消息，它先用你自己的 AI 判断一遍，能回答的写好草稿，拿不准的交给你决定。<b>任何消息都要你确认后才会发出去。</b></p>
+  <div class="flow">
+    <div><b>监听</b><span>在你设定的时段（默认 {{WIN}}）收你选的群里的消息。</span></div>
+    <div><b>筛选</b><span>只看 @ 你、提到关键词、来自关注的同事，或这个群写了监听说明的消息。</span></div>
+    <div><b>AI 判断</b><span>按你的职责范围和工作手册判断：归不归你、能不能答、有没有依据。</span></div>
+    <div><b>你来确认</b><span>写好草稿等你点「发送」，或交给你决定；你不点就不会发。</span></div>
+  </div>
+  <div class="callout ok"><span class="ic">🛡</span><p>它<b>不会自动回复</b>。派活、排期、承诺、拿不准归属的事，一律交给你；每条发出的消息都会记下是谁、什么时候确认的。</p></div>
+  <p>你可以在两个地方处理：<b>操作台</b>（电脑上的网页，一屏看全）和<b>钉钉提醒群</b>（只有你和提醒机器人的群，手机上也能用）。两边是同步的：在一边处理完，另一边自动跟上。</p>
+</section>
+
+<section id="console">
+  <h2><span class="num">2</span>操作台</h2>
+  <p class="lead2">操作台是助手在你电脑上开的网页，只有你能打开（链接带密钥）。提醒群里发「待回复」或「有什么待办」，回复里会附上打开链接；有新事要处理时，它会自动弹到最前面（提醒群发「弹出 关」可以关掉）。</p>
+
+  <h3 id="cols">三栏和颜色</h3>
+  <p>每件事只会出现在一栏里，每栏各自滚动，栏头写着数量。</p>
+  <div class="mock" aria-hidden="true"><div class="mock-cols">
+    <div class="mock-col" style="--c:var(--h-amber)"><h4>要你判断 <i>2</i></h4>
+      <div class="mcard over" style="--c:var(--h-amber)"><b>张三</b> <span class="age">3 小时前 · 超时</span><br>这个接口改动需要一起更新吗？</div>
+      <div class="mcard" style="--c:var(--h-amber)"><b>李四</b> <span class="age">15 分钟前</span><br>帮忙看下这个问题今天能处理吗？</div></div>
+    <div class="mock-col" style="--c:var(--h-blue)"><h4>草稿待发 <i>1</i></h4>
+      <div class="mcard" style="--c:var(--h-blue)"><b>王五</b> <span class="age">8 分钟前</span><br>明天 10 点的会能参加吗？<div class="draftbox" style="margin:6px 0 0;font-size:12.5px"><span class="draftlab">✨ AI 草稿</span><br>可以参加，明天 10 点见。</div></div></div>
+    <div class="mock-col" style="--c:var(--h-green)"><h4>已处理 <i>5</i></h4>
+      <div class="mcard" style="--c:var(--h-green)"><b>赵六</b> <span class="age">已发送</span><br>收到，今天会带上新参数。</div></div>
+  </div></div>
+  <table class="tbl">
+    <tr><th>栏</th><th>里面是什么</th></tr>
+    <tr><td><b>要你判断</b></td><td>AI 拿不准、没有写草稿的事，比如问你能不能做、归不归你、什么时候完成。由你回复、标「已手动处理」或「不归我」。</td></tr>
+    <tr><td><b>草稿待发</b></td><td>AI 已经写好回复，等你看过点「发送」。可以直接改了再发，也可以不发。</td></tr>
+    <tr><td><b>已处理</b></td><td>处理完的事（最近 20 条）：在操作台、提醒群、或你在钉钉原会话里亲自回复的都算。可切「全部 / 已发送」。</td></tr>
+  </table>
+  <p>每张卡片左边有一条颜色竖条，一眼就能看出它的状态：</p>
+  <div class="legend">
+    <div style="--c:var(--h-amber)"><i></i><div><b>橙色</b><span>要你判断</span></div></div>
+    <div style="--c:var(--h-blue)"><i></i><div><b>蓝色</b><span>草稿待发</span></div></div>
+    <div style="--c:var(--h-green)"><i></i><div><b>绿色</b><span>已处理</span></div></div>
+    <div style="--c:var(--h-red)"><i></i><div><b>大红</b><span>超时没处理（盖过其他颜色）</span></div></div>
+  </div>
+  <div class="callout"><span class="ic">👆</span><p><b>点卡片（按钮和输入框以外的地方）</b>，右边会打开这件事的原会话：头像、名字、时间，被提到的那条消息自动滚到中间并高亮。下面有草稿和同样的按钮，可以边看边处理；会话窗打开时，左边的卡片照样能点。按 <span class="kbd">Esc</span> 或点「关闭」收起。</p></div>
+
+  <h3 id="buttons">卡片上的按钮</h3>
+  <div class="mock" aria-hidden="true">
+    <div class="draftlab">✨ AI 草稿 <span style="font-weight:400;color:var(--muted)">可以直接改</span></div>
+    <div class="draftbox">可以参加，明天 10 点会议室见。</div>
+    <div class="btnrow"><span class="mb send">➤ 发送</span><span class="mb stash">🔖 暂存</span><span class="mb done">已手动处理</span><span class="mb no">不发</span><span class="mb ai">✨ 问 AI</span></div>
+  </div>
+  <table class="tbl">
+    <tr><th>按钮</th><th>做什么</th></tr>
+    <tr><td><span class="mb send">发送</span></td><td>把草稿以<b>你的身份</b>发到原会话。点之前会弹出确认框，显示要发的原文和发到哪个群。发出后卡片收起，移到「已处理」。</td></tr>
+    <tr><td><span class="mb send">改了再发</span></td><td>你改过草稿后，「发送」会变成这个名字，确认后按你改过的内容发出。</td></tr>
+    <tr><td><span class="mb send">回复</span></td><td>「要你判断」的卡片上没有草稿：点它打开一个输入框，自己写回复，再点「发送回复」。</td></tr>
+    <tr><td><span class="mb stash">暂存</span></td><td>把草稿先存起来，<b>不发</b>。事情还留在待处理里，之后再发；「要你判断」的事暂存后会移到「草稿待发」。</td></tr>
+    <tr><td><span class="mb done">已手动处理</span></td><td>你已经在别处处理好了（比如钉钉里直接回过、当面说过）。要写一句处理说明，然后移到「已处理」，什么都不会发出。</td></tr>
+    <tr><td><span class="mb no">不发</span></td><td>这份草稿不要了：作废，不发出，移到「已处理」。会先让你确认。</td></tr>
+    <tr><td><span class="mb no">不归我</span></td><td>这件事不是你负责的：要写原因，群里不会有任何回复，移到「已处理」。</td></tr>
+    <tr><td><span class="mb ai">问 AI</span></td><td>先问清楚再决定，比如「依据是什么？」「帮我改得客气点」。回答显示在卡片上，提醒群也会收到；不会往原会话发任何东西。</td></tr>
+  </table>
+  <div class="callout"><span class="ic">💡</span><p>在草稿框里按 <span class="kbd">Ctrl</span> + <span class="kbd">Enter</span>（Mac 上 <span class="kbd">⌘</span> + <span class="kbd">Enter</span>）也能发送，同样会先确认。只看的群（见名词解释）的卡片没有「发送」，请在钉钉里自己回，回完点「已手动处理」。</p></div>
+
+  <h3 id="header">顶部状态</h3>
+  <div class="mock" aria-hidden="true"><div class="chips">
+    <span class="chip ok">值守中 · 监听 4/4 · 最近 16:23</span><span class="chip hot">要你判断 3 · 1 超时</span><span class="chip">草稿待发 2</span><span class="chip">队列 0 · 处理中 0</span><span class="chip">今天已处理 9</span><span class="chip">你的名字 · 16:55:15</span>
+  </div></div>
+  <table class="tbl">
+    <tr><th>标签</th><th>意思</th></tr>
+    <tr><td><b>值守中</b></td><td>助手在正常监听。也可能显示「部分监听断开」（黄）、「没在监听」（红）、「值守时间外」（灰）。「监听 4/4」是连上的群数；「最近 16:23」是最后收到相关消息的时间。点它可以按群看最近 30 条消息。</td></tr>
+    <tr><td><b>要你判断 / 草稿待发</b></td><td>两栏各有几件。有超时的时候变成大红色并写出几件超时；点红色标签就「只看超时」，再点一次恢复全部。</td></tr>
+    <tr><td><b>队列 · 处理中</b></td><td>还在排队等 AI 判断的消息数，和正在判断的数量。</td></tr>
+    <tr><td><b>今天已处理</b></td><td>今天处理完的件数。</td></tr>
+    <tr><td><b>名字 · 时间</b></td><td>当前登录的使用者和页面最近一次刷新时间（每 3 秒刷新）。时间不走了，说明和助手的连接断了，页面顶部也会出现红色提示。</td></tr>
+  </table>
+
+  <h3 id="tools">搜索和其他功能</h3>
+  <ul>
+    <li><b>🔍 搜索</b>：点放大镜展开，输入人名、群名、编号或内容，三栏同时筛选；按 <span class="kbd">Esc</span> 清空。</li>
+    <li><b>只看超时</b>：点红色的「要你判断 / 草稿待发」标签开关。</li>
+    <li><b>💬 调试群对话</b>：就是你的提醒群（操作台里叫「调试群」）。能看到你说过的话、机器人的回复和通知；在这里输入并回车，等于以你的身份在提醒群里说，用法和下面的<a href="#commands">提醒群指令</a>完全一样。</li>
+    <li><b>📋 每日汇报</b>：每天上岗时机器人发的汇报，这里能翻看以前的。</li>
+    <li><b>⚙️ 监听设置</b>：改每天的监听时段（可选全天）；新增要监听的群（先搜索群名再选）、写这个群的监听说明、选「生成草稿」或「只监听提醒」、暂停或恢复某个群。</li>
+    <li><b>🔔 桌面通知</b>：允许后，有新事会弹系统通知。<b>🌓</b> 切换浅色 / 深色 / 跟随系统。最右边的 <b>帮助</b>（圆圈里一个感叹号）打开本页。</li>
+  </ul>
+</section>
+
+<section id="terms">
+  <h2><span class="num">3</span>名词解释</h2>
+  <table class="tbl">
+    <tr><th>名词</th><th>意思</th></tr>
+    <tr><td><b>要你判断</b></td><td>AI 不能替你决定的事：归属拿不准、需要承诺或排期、没有依据回答的。</td></tr>
+    <tr><td><b>草稿</b></td><td>AI 写好、还没发出的回复。只有你确认后才会以你的身份发到原会话。</td></tr>
+    <tr><td><b>暂存</b></td><td>把草稿存着先不发；之后可以再改、再发或不发。</td></tr>
+    <tr><td><b>已处理</b></td><td>这件事结束了：已发送、不发、不归我、手动已处理，或者你在原会话亲自回复了（引用那条消息，或回复里写了同一个单号）。</td></tr>
+    <tr><td><b>超时</b></td><td>超过 <b>{{REMIND}}</b> 还没处理（默认值，配置项 <code>remind_after_minutes</code>）。卡片变成大红色，提醒群会合并再提醒一次，之后每隔同样时间再提醒。提醒群发「提醒间隔 3小时」可以改，「提醒间隔 关」不再重复提醒。</td></tr>
+    <tr><td><b>编号</b></td><td>每件事的代号，格式是 <code>#日期-序号</code>，比如 <code>#1125-3</code> 是 11 月 25 日第 3 件。同一条消息永远是同一个编号。以前的五位编号（如 <code>#A3F9k</code>）照样能用。</td></tr>
+    <tr><td><b>只看的群</b></td><td>助手照常监听、提醒你，但<b>不会往这个群发草稿</b>，需要你在钉钉里自己回。提醒群发「群名 只看」设置，「群名 可发草稿」恢复。</td></tr>
+    <tr><td><b>提醒群</b></td><td>只有你和提醒机器人的钉钉群。所有提醒、草稿、汇报都发在这里，你在这里说的指令助手会执行。操作台里叫「调试群」。</td></tr>
+    <tr><td><b>值守</b>（可选）</td><td>如果你另外配了自动值守程序，可以在配置里用 <code>handled_elsewhere</code> 写一条规则：符合规则的话交给值守处理，助手只记录、不作答；值守在岗时，你没带编号说的「发吧」也算回给值守的。没配就不用管。</td></tr>
+  </table>
+</section>
+
+<section id="commands">
+  <h2><span class="num">4</span>在钉钉提醒群里怎么操作</h2>
+  <p>在提醒群里直接打字就行，手机上也能用。<code>#编号</code> 换成卡片上的编号；点下面带底色的指令可以复制。</p>
+  <table class="tbl">
+    <tr><th>你说</th><th>它做</th></tr>
+    <tr class="grp"><td colspan="2">处理某一件事</td></tr>
+    <tr><td><code class="cp">#编号 可以发送</code></td><td>按草稿发到原会话。也可以说「发送」「发」「发吧」「发出」。</td></tr>
+    <tr><td><code class="cp">#编号 可以发送，@张三</code></td><td>发送时带上你的补充要求（比如 @ 某人），AI 只按要求调整后发出。@ 的人必须在群里唯一找得到，否则不发、草稿保留。</td></tr>
+    <tr><td><code class="cp">#编号 改成：新内容</code></td><td>按你写的新内容发出。</td></tr>
+    <tr><td><code class="cp">#编号 不发</code></td><td>草稿作废，不发出。也可以说「删除」「作废」「算了」。</td></tr>
+    <tr><td><code class="cp">#编号 暂存：内容</code></td><td>只存成草稿，不发；之后回「#编号 可以发送」再发。</td></tr>
+    <tr><td><code class="cp">#编号 问：依据是什么？</code></td><td>问 AI，回答只发在提醒群；可能附一份新草稿。也可以写「请问：」「问一下：」。</td></tr>
+    <tr><td><code class="cp">#编号 不归我</code></td><td>不是你的事，群里不回复。可以加原因：「#编号 不归我：原因」。说「和我无关」「不关我的事」「无需回复」「不用回」「不用管」「不是我的事」也一样。</td></tr>
+    <tr><td><code class="cp">#编号 已处理</code></td><td>你已经在别处处理了，什么都不发。可以加说明：「#编号 已处理：在钉钉里回过了」。也可以说「手动已处理」「处理了」「处理完了」。</td></tr>
+    <tr><td><code class="cp">全部发送</code></td><td>把所有待发的草稿都发出去。</td></tr>
+    <tr class="grp"><td colspan="2">不写编号：引用机器人的卡片</td></tr>
+    <tr><td>引用卡片，回<br><code class="cp">可以发送</code></td><td>长按机器人的那张卡片选「引用」，直接回「可以发送」「不发」「改成：…」「暂存：…」「问：…」「不归我」「已处理」，作用于卡片上的那件事。引用的内容里有不止一个编号时，它不会猜，会请你写出编号，什么都不发。</td></tr>
+    <tr><td>引用卡片，说一句话</td><td>当成就这件事问 AI。</td></tr>
+    <tr><td>不引用、不带编号，直接问</td><td>AI 结合记录回答你，比如「今天处理了多少」「上午那件事回了吗」。</td></tr>
+    <tr class="grp"><td colspan="2">查看和清理</td></tr>
+    <tr><td><code class="cp">待回复</code></td><td>列出全部没处理完的事（有草稿的带上草稿），并附操作台链接。也可以说「草稿」「有什么待办」「还有什么没处理的」。</td></tr>
+    <tr><td><code class="cp">清空</code></td><td>把所有没处理完的事和草稿全部清掉，什么都不发。也可以说「清空待回复」。</td></tr>
+    <tr><td><code class="cp">清理记录</code></td><td>立刻清掉收到的消息原文、群历史导出和旧日志；记忆、草稿和发出记录不动。平时自动只保留最近 30 天。</td></tr>
+    <tr class="grp"><td colspan="2">设置</td></tr>
+    <tr><td><code class="cp">提醒间隔 3小时</code></td><td>没处理的事多久再提醒一次，可以写「30分钟」；「提醒间隔 关」不再重复提醒。</td></tr>
+    <tr><td><code class="cp">群列表</code></td><td>看监听了哪些群，哪些可以发草稿、哪些只看。</td></tr>
+    <tr><td><code class="cp">群名 只看</code></td><td>以后这个群的草稿也不发，只提醒你；「群名 可发草稿」恢复。群名写一部分也行，只要能唯一认出。</td></tr>
+    <tr><td><code class="cp">弹出 关</code></td><td>有新事时不再自动把操作台弹到最前面，只发通知；「弹出 开」恢复（默认开，1 分钟内最多弹一次）。</td></tr>
+    <tr><td><code class="cp">表情 开</code></td><td>允许在轻松的场合给草稿配一张表情包，你确认发送时才一起发；「表情 关」关掉（默认关）。「表情包」看有多少张，「删表情包 名字」以后不再用某一张。</td></tr>
+    <tr><td><code class="cp">升级</code></td><td>收到「有新版本」通知后回这两个字，助手会下载、校验并替换程序，重启后回执新版本号。配置、记忆、草稿都保留。</td></tr>
+  </table>
+  <div class="callout warn"><span class="ic">⚠️</span><p>助手只听<b>你本人</b>在提醒群里说的话；别人发的、或值守程序用你身份代发的，不会当成指令执行。所有发送类指令都只发一次，操作台和提醒群同时点也不会重复发。</p></div>
+</section>
+
+<section id="cards">
+  <h2><span class="num">5</span>机器人卡片怎么看</h2>
+  <p>提醒机器人发来的每张卡片都是同一个格式，从上往下读：</p>
+  <div class="botcard">
+    <div class="t">📝 #1125-3 草稿待你确认</div>
+    <div class="meta">📍 项目测试群　🕒 11-25 14:02</div>
+    <div class="lb">原消息</div><div class="q"><b>王五</b>：明天 10 点的会能参加吗？</div>
+    <div class="lb">草稿</div><div class="q">可以参加，明天 10 点会议室见。</div>
+    <div><b>原因：</b>日程空闲，是否参加需要你决定。</div>
+    <div class="act">👉 回：「#1125-3 可以发送」，或「#1125-3 改成：…」「#1125-3 不发」</div>
+  </div>
+  <div class="anno">
+    <b>标题</b><span>图标 + 编号 + 要你做什么。常见的：🔔 需要你处理、📝 草稿待你确认、⏰ 超时提醒、✅ 已处理、⚠️ 出问题了。</span>
+    <b>第一行</b><span>📍 哪个群、🕒 什么时候；和这件事有关的任务编号会写成 🏷。</span>
+    <b>引用块</b><span>左边有竖线的是原话：「原消息」是对方说的（发送人加粗），「草稿」「新草稿」是准备替你发的，「你的问题」「答复」是你和 AI 的问答。</span>
+    <b>标签行</b><span>「结论」「原因」「当前状态」「下一步」等，一行写一件。</span>
+    <b>👉 开头</b><span>要你回的话，照着回就行；也可以引用这张卡片直接回「可以发送」。</span>
+  </div>
+</section>
+
+<section id="faq" class="qa">
+  <h2><span class="num">6</span>常见问题</h2>
+  <details><summary>群里有人找我，但没收到提醒</summary><div class="ans"><ol>
+    <li>看操作台顶部：是不是「值守时间外」「没在监听」或「部分监听断开」。时段外的消息会在恢复后补读。</li>
+    <li>在「⚙️ 监听设置」里看这个群有没有被加进来、是不是暂停了。</li>
+    <li>助手只处理 @ 你、提到你设的关键词、来自你关注的同事、或写了监听说明的群里的消息；别人之间的对话不会打扰你。</li>
+    <li>在电脑上运行 <code>agent.py check</code> 自检，提醒群会收到「助手自检」。</li>
+  </ol></div></details>
+  <details><summary>点了发送，提醒群说「钉钉消息没发出去」</summary><div class="ans"><p>没发出去的回复已经存成草稿，不会丢。先在电脑上运行 <code>dws doctor</code>，提示有新版本就运行 <code>dws upgrade -y</code>；同事也都发不出去时，是钉钉那边的问题，等恢复后再回「#编号 可以发送」。要紧的先在钉钉里手动发，再标「已手动处理」。</p></div></details>
+  <details><summary>提醒群说「判断用的 AI 换成了备用」或「AI 判断超时或失败」</summary><div class="ans"><p>你设的 AI 这次没给出结果（没装好、没登录、额度用完或卡住），助手会自动改用本机装着的另一个 AI，当天只提醒一次。所有 AI 都没结果时，这件事会留在操作台等你自己判断。经常出现的话，在终端里试一下原来那个 AI 能不能正常用。</p></div></details>
+  <details><summary>怎么升级</summary><div class="ans"><p>提醒群收到「有新版本」的通知后，回「<b>升级</b>」。助手会下载、校验、替换程序并重启，然后回执新版本号；配置、记忆、草稿和你自己的规则都保留。不回复就不会升级。</p></div></details>
+  <details><summary>怎么暂停某个群</summary><div class="ans"><ul>
+    <li><b>完全不听</b>：操作台「⚙️ 监听设置」，在这个群下面点「暂停监听」，之后点「恢复监听」。</li>
+    <li><b>照常提醒但不发草稿</b>：提醒群发「群名 只看」，恢复发「群名 可发草稿」。</li>
+    <li><b>整天都不想被打扰</b>：在监听设置里调整每天的监听时段。</li>
+  </ul></div></details>
+  <details><summary>操作台总是自己弹出来</summary><div class="ans"><p>有新事要处理时才会弹，而且 1 分钟内最多一次。不想弹就在提醒群发「弹出 关」，之后只发通知。</p></div></details>
+  <details><summary>我在钉钉里已经亲自回了，操作台还挂着</summary><div class="ans"><p>回复时<b>引用</b>对方那条消息，或者在回复里写上同一个单号，助手就会自动把它移到「已处理」。没对上的话，点卡片上的「已手动处理」或在提醒群回「#编号 已处理」。</p></div></details>
+</section>
+<p class="help-foot">群消息助手 {{VER}} · 内网页面 · 内容以当前版本为准</p>
+</main>
+</div>
+<div class="toast" id="toast">已复制</div>
+<script>
+(function(){
+  var root=document.documentElement,btns=document.querySelectorAll('.theme-picker button');
+  function cur(){try{return localStorage.getItem('qa-theme')||'auto'}catch(e){return 'auto'}}
+  function apply(t){if(t==='auto')delete root.dataset.theme;else root.dataset.theme=t;btns.forEach(function(b){b.setAttribute('aria-pressed',b.dataset.t===t)});try{localStorage.setItem('qa-theme',t)}catch(e){}}
+  btns.forEach(function(b){b.onclick=function(){apply(b.dataset.t)}});apply(cur());
+  // 目录：滚动时高亮当前所在的一节
+  var links=[].slice.call(document.querySelectorAll('.help-toc a')),secs=links.map(function(a){return document.getElementById(a.getAttribute('href').slice(1))});
+  function spy(){var k=0;secs.forEach(function(s,i){if(s&&s.getBoundingClientRect().top<130)k=i});if(innerHeight+scrollY>=document.documentElement.scrollHeight-4)k=links.length-1;links.forEach(function(a,i){a.classList.toggle('on',i===k)})}
+  addEventListener('scroll',spy,{passive:true});spy();
+  // 点指令复制（内网是 http，用选区复制兜底）
+  var toast=document.getElementById('toast');
+  function copy(s){(navigator.clipboard&&window.isSecureContext?navigator.clipboard.writeText(s):Promise.reject()).catch(function(){var a=document.createElement('textarea');a.value=s;document.body.appendChild(a);a.select();try{document.execCommand('copy')}catch(e){}a.remove()}).finally(function(){toast.textContent='已复制：'+s;toast.classList.add('on');setTimeout(function(){toast.classList.remove('on')},1400)})}
+  document.querySelectorAll('code.cp').forEach(function(c){c.title='点一下复制';c.onclick=function(){copy(c.textContent)}});
+})();
+</script>
+</body></html>

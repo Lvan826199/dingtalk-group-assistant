@@ -92,3 +92,14 @@ def test_owner_duplicate_is_only_enqueued_once(make_agent, monkeypatch):
         assert len(rows) == 1
     finally:
         stop(a)
+
+
+def test_stale_failed_command_does_not_flag(make_agent):
+    import time
+    a, notes, calls = make_agent()
+    now = time.time()
+    a.OWNER_COMMANDS["old"] = {"message_id": "old", "question": "旧的", "received": now - 13 * 3600, "stage": "failed"}
+    a.OWNER_COMMANDS["new"] = {"message_id": "new", "question": "新的", "received": now - 60, "stage": "failed"}
+    snap = a.owner_snapshot(now)
+    assert snap["needs_attention"] == 1
+    assert [x["message_id"] for x in snap["recent"] if not x.get("stale")][0] == "new"

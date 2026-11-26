@@ -156,8 +156,8 @@ def test_notification_layout_preserves_code_links_and_all_facts():
     c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
     source = '群：测试群\\n任务：任务甲\\n结论：未通过。\n\n详情见 [记录](https://example.invalid/issue/1)。\n\n代码：`C:\\new\\notes`\n\n```python\nvalue = "\\n"\nprint(value)\n```'
     body = c.notification_body(source)
-    assert "**群：** 测试群\n\n**任务：** 任务甲" in body
-    assert "**结论**\n\n未通过。" in body
+    assert body.startswith("📍 测试群  🏷 任务甲")   # 3.4.5：群 / 时间 / 任务收成正文第一行（钉钉不认 <font>）
+    assert "**结论：** 未通过。" in body
     assert '[记录](https://example.invalid/issue/1)' in body
     assert '`C:\\new\\notes`' in body
     assert '```python\nvalue = "\\n"\nprint(value)\n```' in body
@@ -172,4 +172,4 @@ def test_long_notification_is_split_without_losing_information():
     sentences = [str(i) + "核查结果仍缺少数据，继续保留原始证据。" * 5 + "。" for i in range(8)]
     result = c.notification_body("答复：" + "".join(sentences))
     assert result.count("\n\n") >= 8
-    assert result.replace("**答复**", "").replace("\n", "") == "".join(sentences)
+    assert result.replace("**答复**", "").replace("> ", "").replace("\n", "") == "".join(sentences)

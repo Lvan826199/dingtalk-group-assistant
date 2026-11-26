@@ -30,6 +30,7 @@ def make_agent(tmp_path, monkeypatch):
         a = importlib.util.module_from_spec(spec); sys.modules[name] = a; spec.loader.exec_module(a)
         notes, calls = [], []
         a.notify = lambda t, x: notes.append((t, x)) or True
+        a.RECEIPT_WAIT = 0                                                 # 回执等待（3.4.3 降噪）在测试里不等
         # 老用例按消息 ID 末五位写死编号（mABCDE → #ABCDE）；日期编号本身另有用例（test_no_for_date_sequence）
         a.no_for = lambda mid: "#" + re.sub(r"[^A-Za-z0-9]", "", mid or "")[-5:]
         if fake_run:
