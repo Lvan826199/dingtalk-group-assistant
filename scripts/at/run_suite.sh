@@ -87,7 +87,8 @@ n-=len(sk); print('suite $S env $env exec $EID $s', n-len(f), '/', n, ('（跳�
       echo "$OUT"
       if [ -n "$FIRST" ]; then
         FLAKY=$(echo "$FIRST" | while IFS= read -r l; do echo "$OUT" | grep -qF -- "$l" || echo "$l"; done)
-        [ -n "$FLAKY" ] && echo "suite $S env $env 偶发（首跑失败、重跑通过，不计失败）：$(echo "$FLAKY" | sed 's/^ *//; s/:.*//' | paste -sd '；' -)"
+        # BSD paste 的分隔符按字节切，中文分号会拆成乱码、post_round 读不了（11-27）→ 用 awk 拼
+        [ -n "$FLAKY" ] && echo "suite $S env $env 偶发（首跑失败、重跑通过，不计失败）：$(echo "$FLAKY" | sed 's/^ *//; s/:.*//' | awk 'NR>1{printf "；"} {printf "%s", $0}')"
       fi
       break
     done

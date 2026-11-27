@@ -10,6 +10,7 @@ from admin import Admin  # noqa: E402
 from client import Client  # noqa: E402
 
 ACCOUNTS = [  # (sid, pf, appVersion, appBuild)
+    ("at-sid-07", "i", "1.1.0", 1010002),   # iOS 1.1.0（11-27 加，环境 170）
     ("at-sid-06", "a", "1.1.1", 1010103),
     ("at-sid-05", "a", "1.1.1", 1010102),
     ("at-sid-01", "a", "1.1.0", 1010001),

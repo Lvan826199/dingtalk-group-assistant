@@ -34,6 +34,8 @@ ENVS = [
      "vars": [("sid", "at-sid-05", "text"), ("pf", "a", "text"), ("appVersion", "1.1.1", "text"), ("appBuild", "1010102", "json"), ("series", "1000058", "json")]},
     {"name": "tac-android-1010103", "desc": "测试服 Android 1.1.1（appBuild 1010103，11-19 GP提审），独立自动化专用号 at-sid-06", "default": False,
      "vars": [("sid", "at-sid-06", "text"), ("pf", "a", "text"), ("appVersion", "1.1.1", "text"), ("appBuild", "1010103", "json"), ("series", "1000058", "json")]},
+    {"name": "tac-ios-1010002", "desc": "测试服 iOS 1.1.0（appBuild 1010002，11-26 全量上线），独立自动化专用号 at-sid-07", "default": False,
+     "vars": [("sid", "at-sid-07", "text"), ("pf", "i", "text"), ("appVersion", "1.1.0", "text"), ("appBuild", "1010002", "json"), ("series", "1000058", "json")]},
 ]
 FLOW = "第一批核心接口（22 个）"
 SUITE = {"name": "第一批核心接口回归", "code": "batch1",

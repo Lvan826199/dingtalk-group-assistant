@@ -18,7 +18,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.environ.get("APP_SERVER_REPO") or os.path.expanduser("~/qa-workflow/mirrors/backend-server")   # 只读镜像，launchd 读不了桌面（11-25）
 TEST_GROUP = os.environ.get("QA_TEST_GROUP", "")
-ENV_NAME = {"163": "Android", "164": "iOS", "165": "Android 1010100（048 新分支）", "166": "iOS 1010101（048 新分支）", "168": "Android 1.1.1 / 1010102", "169": "Android 1.1.1 / 1010103"}
+ENV_NAME = {"163": "Android", "164": "iOS", "165": "Android 1010100（048 新分支）", "166": "iOS 1010101（048 新分支）", "168": "Android 1.1.1 / 1010102", "169": "Android 1.1.1 / 1010103", "170": "iOS 1.1.0 / 1010002"}
 # @ 规则（用户 11-11 定：结果要 @ 到人）：每轮都 @QA负责人（QA 准出）和 合同维护人（盯 dev 测试进度）；有新失败再 @ 本轮构建里提交的研发。
 # 姓名 → 钉钉 openDingtalkId：本机 ~/.config/qa-workflow/people.json（不进仓库）
 PEOPLE = json.load(open(os.path.expanduser("~/.config/qa-workflow/people.json"), encoding="utf-8")) if os.path.exists(os.path.expanduser("~/.config/qa-workflow/people.json")) else {}
@@ -60,7 +60,7 @@ def compose(rounds, commit, rev):
     lines.append(f"套件 72 全量回归 {total} 条（22 个转正接口场景链 + 单接口核实）；合同 app-v1.yaml 版本 {rev}")  # 不用 @，钉钉会当成 @人
     has_new = any(
         f and not any(f.split(": ", 1)[0].startswith(k) for k in KNOWN)
-        for r in rounds for f in r["fails"]
+        for r in rounds if r["status"] != "passed" for f in r["fails"]   # 通过的环境不算（11-27 合并结果文件时残留的失败行误 @ 了研发）
     )
     return "\n".join(lines), has_new
 
@@ -83,7 +83,7 @@ def main():
     dry = "--dry-run" in sys.argv
     ats = [a.split("=", 1) for a in sys.argv[sys.argv.index("--at") + 1:] if "=" in a] if "--at" in sys.argv else []
     rounds = parse(path)
-    error = validate_round(rounds, os.environ.get("ENVS", "163 164 165 166 168 169").split())
+    error = validate_round(rounds, os.environ.get("ENVS", "163 164 165 166 168 169 170").split())
     if re.search(r"^suite .* blocked ", open(path, encoding="utf-8").read(), re.M):
         error = "存在前置阻塞，尚未完成回归"
     if error:

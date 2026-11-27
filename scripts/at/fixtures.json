@@ -6,5 +6,5 @@
   "go_accounts": {"value": {"android": {"sid": "at-sid-01", "pf": "a", "app_version": "1.1.0", "app_build": 1010001},
                             "ios": {"sid": "at-sid-02", "pf": "i", "app_version": "1.0.9", "app_build": 1000901}},
                   "from": "QA 专用号（合同维护人 11-11）", "verified": "2026-11-25"},
-  "envs_full": {"value": [163, 164, 165, 166, 168, 169], "from": "平台项目 903 六个 QA 环境", "verified": "2026-11-25"}
+  "envs_full": {"value": [163, 164, 165, 166, 168, 169, 170], "from": "平台项目 903 七个 QA 环境（170 iOS 1.1.0 11-27 加）", "verified": "2026-11-27"}
 }

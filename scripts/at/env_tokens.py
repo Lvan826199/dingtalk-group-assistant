@@ -15,7 +15,7 @@ import series_check as sc  # noqa: E402  复用它的平台 req / env_vars
 
 
 def main():
-    envs = [a for a in sys.argv[1:] if a.isdigit()] or ["163", "164", "165", "166", "168", "169"]
+    envs = [a for a in sys.argv[1:] if a.isdigit()] or ["163", "164", "165", "166", "168", "169", "170"]
     for env in envs:
         v = {x["name"]: x for x in sc.env_vars(env)}
         try:

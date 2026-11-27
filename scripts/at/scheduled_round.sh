@@ -48,4 +48,11 @@ if ! python3 -I "$AT/post_round.py" "$OUT" --check; then
   exit 0
 fi
 python3 -I "$AT/post_round.py" "$OUT" | tail -3
+# 调试群只发这一条汇总（11-27 本人：一轮七个环境七张卡太多，合成一条；平台通知已改为只发失败）
+SUM=$(python3 -I -c "
+import re,sys
+sys.path.insert(0,'$AT'); from post_round import parse, ENV_NAME
+rs=parse('$OUT'); print('；'.join(f\"{ENV_NAME.get(r['env'],r['env'])} {r['passed']}/{r['total']}\" for r in rs))
+" 2>/dev/null)
+python3 -I "$QA/scripts/notify_user.py" "定时回归 $SLOT 全部通过" "测试服 ${BUILD}，合同 ${REV}。${SUM}。已发测试群。" >/dev/null 2>&1 || true
 echo "STATUS=POSTED"

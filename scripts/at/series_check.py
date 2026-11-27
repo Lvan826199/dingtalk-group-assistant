@@ -18,6 +18,7 @@ from client import Client  # noqa: E402
 T = open(os.path.expanduser("~/.config/aitest/token")).read().strip()
 B = "http://aitest.example.internal:8000/api/v1/projects/903"
 ENVS = {  # 平台环境 id → 账号
+    "170": ("at-sid-07", "i", "1.1.0", 1010002),   # iOS 1.1.0（11-26 全量上线，11-27 加）
     "169": ("at-sid-06", "a", "1.1.1", 1010103),
     "168": ("at-sid-05", "a", "1.1.1", 1010102),
     "163": ("at-sid-01", "a", "1.1.0", 1010001),
